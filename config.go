@@ -5,8 +5,8 @@ type Config struct {
 	ObjectsPath string `json:"objects_path"`
 	// File on server from which builds are scanned.
 	DeployHistory string `json:"deploy_history"`
-	// Throttle HTTP requests.
-	RequestsPerMinute int `json:"requests_per_minute"`
+	// Allowed requests per second.
+	RateLimit float64 `json:"rate_limit"`
 	// List of deployment servers.
 	Servers []string `json:"servers"`
 	// List of files on server that have a constant location.

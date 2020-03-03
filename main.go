@@ -54,9 +54,7 @@ func main() {
 	action := Action{Context: Main}
 	but.IfFatal(action.Init(db), "initialize database")
 
-	state := &State{
-		Config: config,
-	}
+	fetcher := NewFetcher(config, nil, 32)
 
 	if len(os.Args) < 2 {
 		return
@@ -71,15 +69,15 @@ func main() {
 		but.IfFatal(err, "merge servers")
 		log.Printf("merged %d new servers\n", newServers)
 	case "fetch-builds":
-		but.IfFatal(action.FetchBuilds(db, state), "fetch builds")
+		but.IfFatal(action.FetchBuilds(db, fetcher), "fetch builds")
 	case "generate-files":
 		newFiles, err := action.GenerateFiles(db)
 		but.IfFatal(err, "generate files")
 		log.Printf("generated %d new files\n", newFiles)
 	case "fetch-headers":
-		but.IfFatal(action.FetchHeaders(db, state, 0, false), "fetch headers")
+		but.IfFatal(action.FetchHeaders(db, fetcher, 0, false), "fetch headers")
 	case "fetch-files":
-		but.IfFatal(action.FetchFiles(db, state), "fetch files")
+		but.IfFatal(action.FetchFiles(db, fetcher), "fetch files")
 	default:
 		but.Fatalf("unknown command %q", os.Args[1])
 	}

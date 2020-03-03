@@ -200,7 +200,7 @@ func (a Action) AddBuild(e Executor, server string, build Build) error {
 
 // FetchBuilds downloads and scans the DeployHistory file from each server in
 // a database and inserts any new builds into the database.
-func (a Action) FetchBuilds(db *sql.DB, s *State) error {
+func (a Action) FetchBuilds(db *sql.DB, f *Fetcher) error {
 	servers, err := a.GetServers(db)
 	if err != nil {
 		return fmt.Errorf("get servers: %w", err)
@@ -210,7 +210,7 @@ func (a Action) FetchBuilds(db *sql.DB, s *State) error {
 		if err != nil {
 			return err
 		}
-		stream, err := s.FetchDeployHistory(a.Context, server)
+		stream, err := f.FetchDeployHistory(a.Context, server)
 		if err != nil {
 			log.Printf("get deploy history: %s", err)
 			continue
@@ -287,10 +287,10 @@ const DefaultCommitRate = 256
 // how many files are processed before commiting to the database. A value of 0
 // or less uses DefaultCommitRate. The recheck argument forces files with
 // Missing status to be included.
-func (a Action) FetchHeaders(db *sql.DB, s *State, rate int, recheck bool) error {
+func (a Action) FetchHeaders(db *sql.DB, f *Fetcher, rate int, recheck bool) error {
 	return nil
 }
 
-func (a Action) FetchFiles(db *sql.DB, s *State) error {
+func (a Action) FetchFiles(db *sql.DB, f *Fetcher) error {
 	return nil
 }
