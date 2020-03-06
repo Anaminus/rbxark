@@ -464,9 +464,10 @@ type reqEntry struct {
 
 // Combination of extra queries to make.
 const (
-	qHeaderFull   = 1 << iota // Upsert all headers.
-	qHeaderStatus             // Upsert status header.
-	qMetadata                 // Upsert metadata.
+	qHeaderFull       = 1 << iota // Upsert all headers.
+	qHeaderStatus                 // Upsert status header, set other headers to nil.
+	qHeaderJustStatus             // Upsert just the status header.
+	qMetadata                     // Upsert metadata.
 )
 
 type respEntry struct {
@@ -532,6 +533,12 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 			// indicated by files.status, so avoid adding to headers table to
 			// save space.
 			entry.status = StatusMissing
+			if FileStatus(req.status) > StatusUnchecked {
+				// File went missing after being initially found. Update just
+				// the status, retaining any headers that might already be
+				// present.
+				entry.qAction |= qHeaderJustStatus
+			}
 		} else {
 			// Otherwise, log the status code for manual review, and assume the
 			// file should be rechecked.
@@ -714,6 +721,17 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck boo
 				params = append(params,
 					entry.id, entry.respStatus,
 					entry.respStatus, nil, nil, nil, nil,
+				)
+			} else if entry.qAction&qHeaderJustStatus != 0 {
+				query += `;
+					INSERT INTO headers(file, status)
+					VALUES (?, ?)
+					ON CONFLICT (file) DO
+					UPDATE SET status = ?
+				`
+				params = append(params,
+					entry.id, entry.respStatus,
+					entry.respStatus,
 				)
 			}
 			if entry.qAction&qMetadata != 0 {
