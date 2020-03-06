@@ -547,6 +547,23 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 	log.Printf("fetched (%d) %s-%s", req.id, req.build, req.file)
 }
 
+type Stats map[int]int
+
+func (stats Stats) String() string {
+	list := make([]int, 0, len(stats))
+	for s := range stats {
+		if s != 0 {
+			list = append(list, s)
+		}
+	}
+	sort.Ints(list)
+	var b strings.Builder
+	for _, s := range list {
+		fmt.Fprintf(&b, "status %d returned by %d files\n", s, stats[s])
+	}
+	return b.String()
+}
+
 // FetchContent scans files and downloads their content. If objects is not empty
 // then the entire file is downloaded to that directory. Otherwise, just the
 // headers are retrieved and stored in the database.
@@ -564,7 +581,7 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 //
 // The rate argument specifies how many files are processed before commiting to
 // the database. A value of 0 or less uses DefaultCommitRate.
-func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck bool, rate int) error {
+func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck bool, rate int, stats Stats) error {
 	if rate <= 0 {
 		rate = DefaultCommitRate
 	}
@@ -654,6 +671,9 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck boo
 		}
 		log.Printf("committing %d files...", len(reqs))
 		for i, entry := range resps {
+			if stats != nil {
+				stats[entry.respStatus]++
+			}
 			if entry.err != nil {
 				return entry.err
 			}

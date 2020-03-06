@@ -79,9 +79,15 @@ func main() {
 		but.IfFatal(err, "generate files")
 		log.Printf("generated %d new files\n", newFiles)
 	case "fetch-headers":
-		but.IfFatal(action.FetchContent(db, fetcher, "", false, 4096), "fetch headers")
+		stats := Stats{}
+		err := action.FetchContent(db, fetcher, "", false, 4096, stats)
+		but.IfError(err, "fetch headers")
+		but.Log(stats.String())
 	case "fetch-files":
-		but.IfFatal(action.FetchContent(db, fetcher, config.ObjectsPath, false, 256), "fetch files")
+		stats := Stats{}
+		err := action.FetchContent(db, fetcher, config.ObjectsPath, false, 256, stats)
+		but.IfError(err, "fetch files")
+		but.Fatal(stats.String())
 	default:
 		but.Fatalf("unknown command %q", os.Args[1])
 	}
