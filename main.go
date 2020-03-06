@@ -54,7 +54,7 @@ func main() {
 	action := Action{Context: Main}
 	but.IfFatal(action.Init(db), "initialize database")
 
-	fetcher := NewFetcher(config, nil, 32)
+	fetcher := NewFetcher(nil, 32, config.RateLimit)
 
 	if len(os.Args) < 2 {
 		return
@@ -69,15 +69,19 @@ func main() {
 		but.IfFatal(err, "merge servers")
 		log.Printf("merged %d new servers\n", newServers)
 	case "fetch-builds":
-		but.IfFatal(action.FetchBuilds(db, fetcher), "fetch builds")
+		file := config.DeployHistory
+		if file == "" {
+			file = "DeployHistory.txt"
+		}
+		but.IfFatal(action.FetchBuilds(db, fetcher, file), "fetch builds")
 	case "generate-files":
 		newFiles, err := action.GenerateFiles(db)
 		but.IfFatal(err, "generate files")
 		log.Printf("generated %d new files\n", newFiles)
 	case "fetch-headers":
-		but.IfFatal(action.FetchHeaders(db, fetcher, 0, false), "fetch headers")
+		but.IfFatal(action.FetchContent(db, fetcher, "", false, 4096), "fetch headers")
 	case "fetch-files":
-		but.IfFatal(action.FetchFiles(db, fetcher), "fetch files")
+		but.IfFatal(action.FetchContent(db, fetcher, config.ObjectsPath, false, 256), "fetch files")
 	default:
 		but.Fatalf("unknown command %q", os.Args[1])
 	}

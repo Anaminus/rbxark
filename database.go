@@ -2,12 +2,23 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
@@ -28,6 +39,18 @@ const (
 type Executor interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
+// sanitizeBaseURL ensure that a given URL is a base URL.
+func sanitizeBaseURL(u string) string {
+	return strings.TrimRight(u, "/")
+}
+
+func buildFileURL(server, hash, file string) string {
+	if hash == "" {
+		return sanitizeBaseURL(server) + "/" + file
+	}
+	return sanitizeBaseURL(server) + "/" + hash + "-" + file
 }
 
 // Action contains methods that apply to Executers or Queryers.
@@ -200,7 +223,7 @@ func (a Action) AddBuild(e Executor, server string, build Build) error {
 
 // FetchBuilds downloads and scans the DeployHistory file from each server in
 // a database and inserts any new builds into the database.
-func (a Action) FetchBuilds(db *sql.DB, f *Fetcher) error {
+func (a Action) FetchBuilds(db *sql.DB, f *Fetcher, file string) error {
 	servers, err := a.GetServers(db)
 	if err != nil {
 		return fmt.Errorf("get servers: %w", err)
@@ -210,7 +233,7 @@ func (a Action) FetchBuilds(db *sql.DB, f *Fetcher) error {
 		if err != nil {
 			return err
 		}
-		stream, err := f.FetchDeployHistory(a.Context, server)
+		stream, err := f.FetchDeployHistory(a.Context, buildFileURL(server, "", file))
 		if err != nil {
 			log.Printf("get deploy history: %s", err)
 			continue
@@ -281,16 +304,422 @@ func (a Action) GenerateFiles(e Executor) (newRows int, err error) {
 
 const DefaultCommitRate = 256
 
-// FetchHeaders scans files with the Unchecked status and downloads just the
-// headers. A hit adds the file's headers to the database and sets the status to
-// Partial. A miss sets the files status to Missing. The rate argument specifies
-// how many files are processed before commiting to the database. A value of 0
-// or less uses DefaultCommitRate. The recheck argument forces files with
-// Missing status to be included.
-func (a Action) FetchHeaders(db *sql.DB, f *Fetcher, rate int, recheck bool) error {
+func getHeader(headers http.Header, key string, typ int) interface{} {
+	v := headers.Get(key)
+	if v == "" {
+		return nil
+	}
+	switch typ {
+	case 0:
+		return v
+	case 1:
+		n, err := strconv.ParseInt(v, 10, 63)
+		if err != nil {
+			return nil
+		}
+		return n
+	case 2:
+		t, err := time.Parse(time.RFC1123, v)
+		if err != nil {
+			return nil
+		}
+		return t.Unix()
+	}
 	return nil
 }
 
-func (a Action) FetchFiles(db *sql.DB, f *Fetcher) error {
+func fileExists(path string) error {
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func isDir(path string) error {
+	if stat, err := os.Lstat(path); os.IsNotExist(err) {
+		return err
+	} else if !stat.IsDir() {
+		return fmt.Errorf("%s: not a directory", path)
+	}
+	return nil
+}
+
+func isHex(hash string) bool {
+	for _, c := range hash {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func objectExists(objects, hash string) bool {
+	if len(hash) != 32 || !isHex(hash) {
+		return false
+	}
+	dirpath := filepath.Join(objects, hash[:2])
+	if isDir(dirpath) != nil {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(dirpath, hash))
+	return err == nil
+}
+
+type ObjectWriter struct {
+	objects string
+	file    *os.File
+	digest  hash.Hash
+	size    int64
+}
+
+// NewObjectWriter writes an object. If objects is empty, then nil is returned.
+// Otherwise, an ObjectWriter is returned, which will write to a temporary file.
+// The opening of the file is deferred to the first call to Write.
+func NewObjectWriter(objects string) *ObjectWriter {
+	if objects == "" {
+		return nil
+	}
+	return &ObjectWriter{
+		objects: objects,
+		digest:  md5.New(),
+	}
+}
+
+// AsWriter returns the ObjectWriter as an io.Writer, ensuring that a nil
+// pointer results in a nil interface.
+func (w *ObjectWriter) AsWriter() io.Writer {
+	if w == nil {
+		return nil
+	}
+	return w
+}
+
+func (w *ObjectWriter) Write(b []byte) (n int, err error) {
+	if w.file == nil {
+		w.file, err = ioutil.TempFile(w.objects, ".unresolved_object_*")
+		if err != nil {
+			return 0, err
+		}
+	}
+	w.digest.Write(b)
+	n, err = w.file.Write(b)
+	w.size += int64(n)
+	return n, err
+}
+
+var ErrUnexpectedHash = errors.New("unexpected hash or size")
+
+// Filename returns the location of the underlying temporary file.
+func (w *ObjectWriter) Filename() string {
+	if w.file == nil {
+		return ""
+	}
+	return w.file.Name()
+}
+
+// Close finishes writing the file. A hash of the written content is computed,
+// and always returned. The size of the content is also always returned. If a
+// specific hash is expected, and the computed hash does not match the expected
+// hash, then ErrUnexpectedHash is returned.
+//
+// If successfully written, the file is moved to the objects directory with the
+// hash as the file name. The file is located under a subdirectory that is named
+// after the first two characters of the hash. This subdirectory will be created
+// if it does not exist.
+//
+//     hash: d41d8cd98f00b204e9800998ecf8427e
+//     path: objects/d4/d41d8cd98f00b204e9800998ecf8427e
+//
+// If an error occurred, the temporary file will persist. Its location can be
+// retrieved with Filename().
+func (w *ObjectWriter) Close() (size int64, hash string, err error) {
+	var sum [32]byte
+	w.digest.Sum(sum[16:])
+	hex.Encode(sum[:], sum[16:])
+	hash = string(sum[:])
+	if w.file == nil {
+		return w.size, hash, nil
+	}
+	if err = w.file.Sync(); err != nil {
+		w.file.Close()
+		return w.size, hash, err
+	}
+	if err = w.file.Close(); err != nil {
+		return w.size, hash, err
+	}
+	dirpath := filepath.Join(w.objects, hash[:2])
+	if _, err = os.Lstat(dirpath); os.IsNotExist(err) {
+		if err = os.Mkdir(dirpath, 0755); err != nil {
+			return w.size, hash, err
+		}
+	}
+	if err = os.Rename(w.file.Name(), filepath.Join(dirpath, hash)); err != nil {
+		return w.size, hash, err
+	}
+	return w.size, hash, nil
+}
+
+type reqEntry struct {
+	id     int
+	server string
+	build  string
+	file   string
+}
+
+// Combination of extra queries to make.
+const (
+	qHeaderFull   = 1 << iota // Upsert all headers.
+	qHeaderStatus             // Upsert status header.
+	qMetadata                 // Upsert metadata.
+)
+
+type respEntry struct {
+	err error
+
+	id      int
+	status  FileStatus
+	qAction int
+
+	// headers
+	respStatus    int
+	contentLength sql.NullInt64
+	lastModified  sql.NullInt64
+	contentType   sql.NullString
+	etag          sql.NullString
+
+	// metadata
+	hash string
+	size int64
+}
+
+func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, objects string, req *reqEntry, entry *respEntry) {
+	defer wg.Done()
+	*entry = respEntry{}
+	object := NewObjectWriter(objects)
+	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), object.AsWriter())
+	if err != nil {
+		*entry = respEntry{err: fmt.Errorf("fetch content: %w", err)}
+		return
+	}
+	entry.id = req.id
+	entry.respStatus = respStatus
+	if 200 <= respStatus && respStatus < 300 {
+		entry.status = StatusPartial
+		entry.qAction |= qHeaderFull
+		if v, err := strconv.ParseInt(headers.Get("content-length"), 10, 64); err == nil {
+			entry.contentLength.Valid = true
+			entry.contentLength.Int64 = v
+		}
+		if v, err := time.Parse(time.RFC1123, headers.Get("last-modified")); err == nil {
+			entry.lastModified.Valid = true
+			entry.lastModified.Int64 = v.Unix()
+		}
+		entry.contentType.Valid = true
+		entry.contentType.String = headers.Get("content-type")
+		entry.etag.Valid = true
+		entry.etag.String = headers.Get("etag")
+		if object != nil {
+			size, hash, err := object.Close()
+			if err != nil {
+				*entry = respEntry{err: fmt.Errorf("close object %s-%s: %w", req.build, req.file, err)}
+				return
+			}
+			entry.status = StatusComplete
+			entry.qAction |= qMetadata
+			entry.hash = hash
+			entry.size = size
+		}
+	} else {
+		entry.status = StatusMissing
+		entry.qAction |= qHeaderStatus
+	}
+	log.Printf("fetched (%d) %s-%s", req.id, req.build, req.file)
+}
+
+// FetchContent scans files and downloads their content. If objects is not empty
+// then the entire file is downloaded to that directory. Otherwise, just the
+// headers are retrieved and stored in the database.
+//
+// When downloading entire files, only files with the Unchecked or Partial
+// status are considered. A hit writes the file to objects, adds the file's
+// headers to the database, and sets the status to Complete. A miss sets the
+// status to Missing.
+//
+// When just retrieving headers, only files with the Unchecked status are
+// considered. A hit adds the file's headers to the database, and sets the
+// status to Partial. A miss sets the status to Missing.
+//
+// If recheck is true, then files with the Missing status are also included.
+//
+// The rate argument specifies how many files are processed before commiting to
+// the database. A value of 0 or less uses DefaultCommitRate.
+func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck bool, rate int) error {
+	if rate <= 0 {
+		rate = DefaultCommitRate
+	}
+	minstatus := StatusUnchecked
+	maxstatus := StatusUnchecked
+	if recheck {
+		minstatus = StatusMissing
+	}
+	if objects != "" {
+		if err := isDir(objects); err != nil {
+			return err
+		}
+		maxstatus = StatusPartial
+	}
+	reqs := make([]reqEntry, 0, rate)
+	resps := make([]respEntry, 0, rate)
+	wg := sync.WaitGroup{}
+	for {
+		const query = `
+			WITH temp(rowid, build, filename) AS (
+				SELECT rowid, build, filename
+				FROM files WHERE status BETWEEN ? AND ? LIMIT ?
+			)
+			SELECT
+				temp.rowid,
+				servers.url,
+				builds.hash,
+				filenames.name
+			FROM
+				temp,
+				builds,
+				filenames,
+				build_servers,
+				servers
+			WHERE builds.rowid == temp.build
+			AND filenames.rowid == temp.filename
+			AND build_servers.build == temp.build
+			AND build_servers.server == servers.rowid
+			-- Collapse duplicates caused by build being available from multiple
+			-- servers. (TODO: is this right?)
+			GROUP BY hash
+		`
+		// TODO: Retain duplicate hashes; when a server fails, try the next
+		// server. Requires maintaining a map of successful hashes for the
+		// duration of the transaction. The map only needs to be as large as
+		// rate; successful hashes will not be pulled out of the database again.
+		rows, err := db.QueryContext(a.Context, query, minstatus, maxstatus, rate)
+		if err != nil {
+			return fmt.Errorf("select files: %w", err)
+		}
+		reqs = reqs[:0]
+		for rows.Next() {
+			i := len(reqs)
+			reqs = append(reqs, reqEntry{})
+			err := rows.Scan(
+				&reqs[i].id,
+				&reqs[i].server,
+				&reqs[i].build,
+				&reqs[i].file,
+			)
+			if err != nil {
+				rows.Close()
+				return fmt.Errorf("scan row: %w", err)
+			}
+		}
+		if err = rows.Close(); err != nil {
+			return fmt.Errorf("finish rows: %w", err)
+		}
+		if err = rows.Err(); err != nil {
+			return fmt.Errorf("row error: %w", err)
+		}
+		if len(reqs) == 0 {
+			break
+		}
+
+		resps = resps[:len(reqs)]
+		wg.Add(len(reqs))
+		for i := range reqs {
+			go runFetchContentWorker(a.Context, &wg, f, objects, &reqs[i], &resps[i])
+		}
+		log.Printf("fetching %d files...", len(reqs))
+		wg.Wait()
+
+		tx, err := db.BeginTx(a.Context, nil)
+		if err != nil {
+			return fmt.Errorf("begin transaction: %w", err)
+		}
+		log.Printf("committing %d files...", len(reqs))
+		for i, entry := range resps {
+			if entry.err != nil {
+				return entry.err
+			}
+			query := `UPDATE files SET status = ? WHERE rowid = ?`
+			params := []interface{}{int(entry.status), entry.id}
+			if entry.qAction&qHeaderFull != 0 {
+				query += `;
+					INSERT INTO headers(
+						file,
+						status,
+						content_length,
+						last_modified,
+						content_type,
+						etag
+					)
+					VALUES (?, ?, ?, ?, ?, ?)
+					ON CONFLICT (file) DO
+					UPDATE SET
+						status = ?,
+						content_length = ?,
+						last_modified = ?,
+						content_type = ?,
+						etag = ?
+				`
+				params = append(params,
+					entry.id,
+					entry.respStatus,
+					entry.contentLength,
+					entry.lastModified,
+					entry.contentType,
+					entry.etag,
+
+					entry.respStatus,
+					entry.contentLength,
+					entry.lastModified,
+					entry.contentType,
+					entry.etag,
+				)
+
+			} else if entry.qAction&qHeaderStatus != 0 {
+				query += `;
+					INSERT INTO headers(file, status)
+					VALUES (?, ?)
+					ON CONFLICT (file) DO
+					UPDATE SET
+						status = ?,
+						content_length = ?,
+						last_modified = ?,
+						content_type = ?,
+						etag = ?
+				`
+				params = append(params,
+					entry.id, entry.respStatus,
+					entry.respStatus, nil, nil, nil, nil,
+				)
+			}
+			if entry.qAction&qMetadata != 0 {
+				query += `;
+					INSERT INTO metadata(file, size, md5)
+					VALUES (?, ?, ?)
+					ON CONFLICT (file) DO
+					UPDATE SET size = ?, md5 = ?
+				`
+				params = append(params,
+					entry.id, entry.size, entry.hash,
+					entry.size, entry.hash,
+				)
+			}
+			if _, err = tx.ExecContext(a.Context, query, params...); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("update file %s-%s: %w", reqs[i].build, reqs[i].file, err)
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return fmt.Errorf("commit transaction: %w", err)
+		}
+		log.Printf("committed %d files", len(reqs))
+	}
 	return nil
 }
