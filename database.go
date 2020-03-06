@@ -461,6 +461,7 @@ func (w *ObjectWriter) Close() (size int64, hash string, err error) {
 
 type reqEntry struct {
 	id     int
+	status int
 	server string
 	build  string
 	file   string
@@ -530,8 +531,18 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 			entry.size = size
 		}
 	} else {
-		entry.status = StatusMissing
-		entry.qAction |= qHeaderStatus
+		if respStatus == 403 {
+			// 403 is expected if the file does not exist (or is not exposed).
+			// Most file combinations will be this, and the status is already
+			// indicated by files.status, so avoid adding to headers table to
+			// save space.
+			entry.status = StatusMissing
+		} else {
+			// Otherwise, log the status code for manual review, and assume the
+			// file should be rechecked.
+			entry.status = StatusUnchecked
+			entry.qAction |= qHeaderStatus
+		}
 	}
 	log.Printf("fetched (%d) %s-%s", req.id, req.build, req.file)
 }
