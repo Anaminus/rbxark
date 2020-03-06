@@ -328,13 +328,6 @@ func getHeader(headers http.Header, key string, typ int) interface{} {
 	return nil
 }
 
-func fileExists(path string) error {
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
 func isDir(path string) error {
 	if stat, err := os.Lstat(path); os.IsNotExist(err) {
 		return err
@@ -357,11 +350,7 @@ func objectExists(objects, hash string) bool {
 	if len(hash) != 32 || !isHex(hash) {
 		return false
 	}
-	dirpath := filepath.Join(objects, hash[:2])
-	if isDir(dirpath) != nil {
-		return false
-	}
-	_, err := os.Lstat(filepath.Join(dirpath, hash))
+	_, err := os.Lstat(filepath.Join(objects, hash[:2], hash))
 	return err == nil
 }
 
@@ -453,7 +442,13 @@ func (w *ObjectWriter) Close() (size int64, hash string, err error) {
 			return w.size, hash, err
 		}
 	}
-	if err = os.Rename(w.file.Name(), filepath.Join(dirpath, hash)); err != nil {
+	filename := filepath.Join(dirpath, hash)
+	if _, err = os.Lstat(filename); !os.IsNotExist(err) {
+		// File already exists.
+		os.Remove(w.file.Name())
+		return w.size, hash, nil
+	}
+	if err = os.Rename(w.file.Name(), filename); err != nil {
 		return w.size, hash, err
 	}
 	return w.size, hash, nil
@@ -497,7 +492,7 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 	defer wg.Done()
 	*entry = respEntry{}
 	object := NewObjectWriter(objects)
-	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), object.AsWriter())
+	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), objects, object.AsWriter())
 	if err != nil {
 		*entry = respEntry{err: fmt.Errorf("fetch content: %w", err)}
 		return

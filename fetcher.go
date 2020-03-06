@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/robloxapi/rbxdump/histlog"
 	"golang.org/x/time/rate"
@@ -113,10 +114,19 @@ func (f *Fetcher) FetchDeployHistory(ctx context.Context, url string) (stream hi
 	return stream, nil
 }
 
+func hashFromETag(etag string) string {
+	// From `"x"` to `x`
+	hash := strings.Trim(etag, "\"")
+	if i := strings.Index(hash, "-"); i >= 0 {
+		hash = hash[:i]
+	}
+	return hash
+}
+
 // FetchContent fetches information about a file from url. If w is not nil, the
 // content of the file is written to it. Otherwise, just the headers of the
 // response are returned.
-func (f *Fetcher) FetchContent(ctx context.Context, url string, w io.Writer) (status int, headers http.Header, err error) {
+func (f *Fetcher) FetchContent(ctx context.Context, url string, objects string, w io.Writer) (status int, headers http.Header, err error) {
 	method := "GET"
 	if w == nil {
 		method = "HEAD"
@@ -130,6 +140,12 @@ func (f *Fetcher) FetchContent(ctx context.Context, url string, w io.Writer) (st
 		return 0, nil, fmt.Errorf("do request: %w", err)
 	}
 	if w == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return resp.StatusCode, resp.Header, nil
+	}
+	if objects != "" && objectExists(objects, hashFromETag(resp.Header.Get("etag"))) {
+		// The etag, converted to a hash, was found in the cache; download can
+		// be skipped.
 		resp.Body.Close()
 		return resp.StatusCode, resp.Header, nil
 	}
