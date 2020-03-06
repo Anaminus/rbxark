@@ -434,7 +434,7 @@ func (w *ObjectWriter) Filename() string {
 // retrieved with Filename().
 func (w *ObjectWriter) Close() (size int64, hash string, err error) {
 	var sum [32]byte
-	w.digest.Sum(sum[16:])
+	w.digest.Sum(sum[16:16])
 	hex.Encode(sum[:], sum[16:])
 	hash = string(sum[:])
 	if w.file == nil {
