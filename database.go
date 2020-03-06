@@ -601,28 +601,19 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck boo
 	wg := sync.WaitGroup{}
 	for {
 		const query = `
-			WITH temp(rowid, build, filename) AS (
-				SELECT rowid, build, filename
-				FROM files WHERE status BETWEEN ? AND ? LIMIT ?
-			)
-			SELECT
-				temp.rowid,
-				servers.url,
-				builds.hash,
-				filenames.name
-			FROM
-				temp,
-				builds,
-				filenames,
-				build_servers,
-				servers
-			WHERE builds.rowid == temp.build
-			AND filenames.rowid == temp.filename
-			AND build_servers.build == temp.build
-			AND build_servers.server == servers.rowid
+			WITH temp AS (
+				SELECT files.rowid, servers.url, builds.hash, filenames.name
+				FROM files, builds, filenames, build_servers, servers
+				WHERE files.status BETWEEN ? AND ?
+				AND builds.rowid == files.build
+				AND filenames.rowid == files.filename
+				AND build_servers.build == files.build
+				AND build_servers.server == servers.rowid
+				LIMIT ?
+			) SELECT * FROM temp
 			-- Collapse duplicates caused by build being available from multiple
-			-- servers. (TODO: is this right?)
-			GROUP BY hash
+			-- servers. Note: this really slows down the query.
+			GROUP BY hash, name
 		`
 		// TODO: Retain duplicate hashes; when a server fails, try the next
 		// server. Requires maintaining a map of successful hashes for the
