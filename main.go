@@ -85,7 +85,7 @@ func main() {
 		but.Log(stats.String())
 	case "fetch-files":
 		stats := Stats{}
-		err := action.FetchContent(db, fetcher, config.ObjectsPath, false, 256, stats)
+		err := action.FetchContent(db, fetcher, config.ObjectsPath, false, 64, stats)
 		but.IfError(err, "fetch files")
 		but.Fatal(stats.String())
 	default:
