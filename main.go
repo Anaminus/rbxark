@@ -48,7 +48,7 @@ func main() {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", "test.db")
+	db, err := sql.Open("sqlite3", "ark.db")
 	but.IfFatal(err, "open database")
 
 	action := Action{Context: Main}
