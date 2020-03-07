@@ -60,7 +60,7 @@ func main() {
 		return
 	}
 	switch os.Args[1] {
-	case "merge-files":
+	case "merge-filenames":
 		newFiles, err := action.MergeFiles(db, config.BuildFiles)
 		but.IfFatal(err, "merge files")
 		log.Printf("merged %d new files\n", newFiles)
