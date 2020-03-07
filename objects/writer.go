@@ -104,7 +104,7 @@ func (w *Writer) Close() (size int64, hash string, err error) {
 		os.Remove(w.file.Name())
 		return w.size, hash, nil
 	}
-	if err = os.Rename(w.file.Name(), filename); err != nil {
+	if err = os.Rename(w.file.Name(), filename); !os.IsNotExist(err) {
 		return w.size, hash, err
 	}
 	return w.size, hash, nil
