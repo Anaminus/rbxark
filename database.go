@@ -2,24 +2,19 @@ package main
 
 import (
 	"context"
-	"crypto/md5"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
-	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/anaminus/rbxark/objects"
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robloxapi/rbxdump/histlog"
@@ -337,123 +332,6 @@ func isDir(path string) error {
 	return nil
 }
 
-func isHex(hash string) bool {
-	for _, c := range hash {
-		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-func objectExists(objects, hash string) bool {
-	if len(hash) != 32 || !isHex(hash) {
-		return false
-	}
-	_, err := os.Lstat(filepath.Join(objects, hash[:2], hash))
-	return err == nil
-}
-
-type ObjectWriter struct {
-	objects string
-	file    *os.File
-	digest  hash.Hash
-	size    int64
-}
-
-// NewObjectWriter writes an object. If objects is empty, then nil is returned.
-// Otherwise, an ObjectWriter is returned, which will write to a temporary file.
-// The opening of the file is deferred to the first call to Write.
-func NewObjectWriter(objects string) *ObjectWriter {
-	if objects == "" {
-		return nil
-	}
-	return &ObjectWriter{
-		objects: objects,
-		digest:  md5.New(),
-	}
-}
-
-// AsWriter returns the ObjectWriter as an io.Writer, ensuring that a nil
-// pointer results in a nil interface.
-func (w *ObjectWriter) AsWriter() io.Writer {
-	if w == nil {
-		return nil
-	}
-	return w
-}
-
-func (w *ObjectWriter) Write(b []byte) (n int, err error) {
-	if w.file == nil {
-		w.file, err = ioutil.TempFile(w.objects, ".unresolved_object_*")
-		if err != nil {
-			return 0, err
-		}
-	}
-	w.digest.Write(b)
-	n, err = w.file.Write(b)
-	w.size += int64(n)
-	return n, err
-}
-
-var ErrUnexpectedHash = errors.New("unexpected hash or size")
-
-// Filename returns the location of the underlying temporary file.
-func (w *ObjectWriter) Filename() string {
-	if w.file == nil {
-		return ""
-	}
-	return w.file.Name()
-}
-
-// Close finishes writing the file. A hash of the written content is computed,
-// and always returned. The size of the content is also always returned. If a
-// specific hash is expected, and the computed hash does not match the expected
-// hash, then ErrUnexpectedHash is returned.
-//
-// If successfully written, the file is moved to the objects directory with the
-// hash as the file name. The file is located under a subdirectory that is named
-// after the first two characters of the hash. This subdirectory will be created
-// if it does not exist.
-//
-//     hash: d41d8cd98f00b204e9800998ecf8427e
-//     path: objects/d4/d41d8cd98f00b204e9800998ecf8427e
-//
-// If an error occurred, the temporary file will persist. Its location can be
-// retrieved with Filename().
-func (w *ObjectWriter) Close() (size int64, hash string, err error) {
-	var sum [32]byte
-	w.digest.Sum(sum[16:16])
-	hex.Encode(sum[:], sum[16:])
-	hash = string(sum[:])
-	if w.file == nil {
-		return w.size, hash, nil
-	}
-	if err = w.file.Sync(); err != nil {
-		w.file.Close()
-		return w.size, hash, err
-	}
-	if err = w.file.Close(); err != nil {
-		return w.size, hash, err
-	}
-	dirpath := filepath.Join(w.objects, hash[:2])
-	if _, err = os.Lstat(dirpath); os.IsNotExist(err) {
-		if err = os.Mkdir(dirpath, 0755); err != nil {
-			return w.size, hash, err
-		}
-	}
-	filename := filepath.Join(dirpath, hash)
-	if _, err = os.Lstat(filename); !os.IsNotExist(err) {
-		// File already exists.
-		os.Remove(w.file.Name())
-		return w.size, hash, nil
-	}
-	if err = os.Rename(w.file.Name(), filename); err != nil {
-		return w.size, hash, err
-	}
-	return w.size, hash, nil
-}
-
 type reqEntry struct {
 	id     int
 	status int
@@ -489,11 +367,11 @@ type respEntry struct {
 	size int64
 }
 
-func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, objects string, req *reqEntry, entry *respEntry) {
+func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, objpath string, req *reqEntry, entry *respEntry) {
 	defer wg.Done()
 	*entry = respEntry{}
-	object := NewObjectWriter(objects)
-	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), objects, object.AsWriter())
+	object := objects.NewWriter(objpath)
+	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), objpath, object.AsWriter())
 	if err != nil {
 		*entry = respEntry{err: fmt.Errorf("fetch content: %w", err)}
 		return
@@ -583,7 +461,7 @@ func (stats Stats) String() string {
 //
 // The rate argument specifies how many files are processed before commiting to
 // the database. A value of 0 or less uses DefaultCommitRate.
-func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck bool, rate int, stats Stats) error {
+func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, recheck bool, rate int, stats Stats) error {
 	if rate <= 0 {
 		rate = DefaultCommitRate
 	}
@@ -592,8 +470,8 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck boo
 	if recheck {
 		minstatus = StatusMissing
 	}
-	if objects != "" {
-		if err := isDir(objects); err != nil {
+	if objpath != "" {
+		if err := isDir(objpath); err != nil {
 			return err
 		}
 		maxstatus = StatusPartial
@@ -653,7 +531,7 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objects string, recheck boo
 		resps = resps[:len(reqs)]
 		wg.Add(len(reqs))
 		for i := range reqs {
-			go runFetchContentWorker(a.Context, &wg, f, objects, &reqs[i], &resps[i])
+			go runFetchContentWorker(a.Context, &wg, f, objpath, &reqs[i], &resps[i])
 		}
 		log.Printf("fetching %d files...", len(reqs))
 		wg.Wait()
