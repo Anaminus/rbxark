@@ -224,6 +224,37 @@ func (a Action) GetFilenames(e Executor) (filenames []string, err error) {
 	return
 }
 
+// FindManifests returns a list of hashes for existing rbxPkgManifest files.
+func (a Action) FindManifests(e Executor) (hashes []string, err error) {
+	const query = `
+		SELECT metadata.md5 FROM files,metadata
+		WHERE metadata.file == files.rowid
+		AND files.filename == (
+			SELECT rowid FROM filenames
+			WHERE name == "rbxPkgManifest.txt"
+		)
+	`
+	rows, err := e.QueryContext(a.Context, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var hash string
+		if err = rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		hashes = append(hashes, hash)
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return
+}
+
 // AddBuild inserts a single build into a database.
 func (a Action) AddBuild(e Executor, server string, build Build) error {
 	const query = `

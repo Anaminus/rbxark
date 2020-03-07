@@ -33,7 +33,7 @@ func Exists(objpath, hash string) bool {
 }
 
 // Stat returns the file info for the object of a given hash. Returns nil if the
-// object does not exist. Returns nil if objpath is empty.
+// object does not exist or if objpath is empty.
 func Stat(objpath, hash string) os.FileInfo {
 	if objpath == "" {
 		return nil
@@ -45,6 +45,18 @@ func Stat(objpath, hash string) os.FileInfo {
 		return stat
 	}
 	return nil
+}
+
+// Path returns the file path for the object of a given hash. Returns an empty
+// string if the hash is invalid or if objpath is empty.
+func Path(objpath, hash string) string {
+	if objpath == "" {
+		return ""
+	}
+	if !IsHash(hash) {
+		return ""
+	}
+	return filepath.Join(objpath, hash[:2], hash)
 }
 
 // HashFromETag attempts to convert an ETag to a valid hash. Return an empty

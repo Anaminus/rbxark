@@ -4,11 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 
 	"github.com/anaminus/but"
+	"github.com/anaminus/rbxark/objects"
+	"github.com/anaminus/rbxark/pkgman"
 	"github.com/jessevdk/go-flags"
 )
 
@@ -88,6 +91,47 @@ func main() {
 		err := action.FetchContent(db, fetcher, config.ObjectsPath, false, 64, stats)
 		but.IfError(err, "fetch files")
 		but.Fatal(stats.String())
+	case "find-filenames":
+		if config.ObjectsPath == "" {
+			but.Fatal("unspecified objects path")
+		}
+
+		names, err := action.GetFilenames(db)
+		but.IfFatal(err, "get filenames")
+
+		filenames := map[string]struct{}{}
+		for _, name := range names {
+			filenames[name] = struct{}{}
+		}
+
+		manifests, err := action.FindManifests(db)
+		but.IfFatal(err, "find manifests")
+
+		for _, hash := range manifests {
+			path := objects.Path(config.ObjectsPath, hash)
+			if path == "" {
+				but.IfError(fmt.Errorf("%s: file does not exist", hash))
+				continue
+			}
+			man, err := os.Open(path)
+			if err != nil {
+				but.IfError(fmt.Errorf("%s: %w", hash, err))
+				continue
+			}
+			entries, err := pkgman.Decode(man)
+			if err != nil {
+				but.IfError(fmt.Errorf("%s: %w", hash, err))
+				continue
+			}
+			for _, entry := range entries {
+				if _, ok := filenames[entry.Name]; ok {
+					continue
+				}
+				log.Println(entry.Name)
+				filenames[entry.Name] = struct{}{}
+			}
+		}
+
 	default:
 		but.Fatalf("unknown command %q", os.Args[1])
 	}

@@ -48,7 +48,7 @@ func (w *Writer) AsWriter() io.Writer {
 // writer is closed.
 func (w *Writer) Write(b []byte) (n int, err error) {
 	if w.file == nil {
-		w.file, err = ioutil.TempFile("", ".unresolved_rbxark_object_*")
+		w.file, err = ioutil.TempFile(w.objpath, ".unresolved_rbxark_object_*")
 		if err != nil {
 			return 0, err
 		}
