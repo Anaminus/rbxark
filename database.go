@@ -200,6 +200,30 @@ func (a Action) GetServers(e Executor) (servers []string, err error) {
 	return
 }
 
+// GetFilenames returns a list of filenames from a database.
+func (a Action) GetFilenames(e Executor) (filenames []string, err error) {
+	const query = `SELECT name FROM filenames`
+	rows, err := e.QueryContext(a.Context, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		filenames = append(filenames, name)
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return
+}
+
 // AddBuild inserts a single build into a database.
 func (a Action) AddBuild(e Executor, server string, build Build) error {
 	const query = `
