@@ -20,13 +20,31 @@ func IsHash(s string) bool {
 }
 
 // Exists returns whether an object for a given hash exists in an object path.
-// The hash must be lower case.
+// The hash must be lower case. Returns false if objpath is empty.
 func Exists(objpath, hash string) bool {
+	if objpath == "" {
+		return false
+	}
 	if !IsHash(hash) {
 		return false
 	}
 	_, err := os.Lstat(filepath.Join(objpath, hash[:2], hash))
 	return err == nil
+}
+
+// Stat returns the file info for the object of a given hash. Returns nil if the
+// object does not exist. Returns nil if objpath is empty.
+func Stat(objpath, hash string) os.FileInfo {
+	if objpath == "" {
+		return nil
+	}
+	if !IsHash(hash) {
+		return nil
+	}
+	if stat, err := os.Lstat(filepath.Join(objpath, hash[:2], hash)); err == nil {
+		return stat
+	}
+	return nil
 }
 
 // HashFromETag attempts to convert an ETag to a valid hash. Return an empty

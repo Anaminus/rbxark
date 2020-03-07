@@ -3,6 +3,7 @@ package objects
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"io"
 	"io/ioutil"
@@ -16,6 +17,7 @@ type Writer struct {
 	file    *os.File
 	digest  hash.Hash
 	size    int64
+	expsize int64
 }
 
 // NewWriter returns a new Writer. If objpath is empty, then nil is returned.
@@ -28,6 +30,7 @@ func NewWriter(objpath string) *Writer {
 	return &Writer{
 		objpath: objpath,
 		digest:  md5.New(),
+		expsize: -1,
 	}
 }
 
@@ -45,7 +48,7 @@ func (w *Writer) AsWriter() io.Writer {
 // writer is closed.
 func (w *Writer) Write(b []byte) (n int, err error) {
 	if w.file == nil {
-		w.file, err = ioutil.TempFile(w.objpath, ".unresolved_object_*")
+		w.file, err = ioutil.TempFile("", ".unresolved_rbxark_object_*")
 		if err != nil {
 			return 0, err
 		}
@@ -56,12 +59,24 @@ func (w *Writer) Write(b []byte) (n int, err error) {
 	return n, err
 }
 
-// Filename returns the location of the underlying temporary file.
-func (w *Writer) Filename() string {
-	if w.file == nil {
-		return ""
+// Remove closes and removes the temporary file.
+func (w *Writer) Remove() error {
+	if w == nil {
+		return nil
 	}
-	return w.file.Name()
+	if w.file == nil {
+		return nil
+	}
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+	return os.Remove(w.file.Name())
+}
+
+// ExpectSize sets the expected size of the file, which will be checked when the
+// file is closed.
+func (w *Writer) ExpectSize(size int64) {
+	w.expsize = size
 }
 
 // Close finishes writing the file. A hash of the written content is computed,
@@ -75,13 +90,19 @@ func (w *Writer) Filename() string {
 //     hash: d41d8cd98f00b204e9800998ecf8427e
 //     path: objects/d4/d41d8cd98f00b204e9800998ecf8427e
 //
-// If an error occurs, the temporary file will persist. Its location can be
-// retrieved with Filename().
+// If an error occurs, the temporary file will persist. It can be removed with
+// Remove().
 func (w *Writer) Close() (size int64, hash string, err error) {
 	var sum [32]byte
 	w.digest.Sum(sum[16:16])
 	hex.Encode(sum[:], sum[16:])
 	hash = string(sum[:])
+	if w.expsize >= 0 && w.size != w.expsize {
+		if w.file != nil {
+			w.file.Close()
+		}
+		return w.size, hash, fmt.Errorf("expected %d bytes, got %d", w.expsize, w.size)
+	}
 	if w.file == nil {
 		return w.size, hash, nil
 	}

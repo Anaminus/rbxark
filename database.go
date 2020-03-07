@@ -413,15 +413,31 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 			entry.lastModified.Valid = true
 			entry.lastModified.Int64 = v.Unix()
 		}
-		entry.contentType.Valid = true
-		entry.contentType.String = headers.Get("content-type")
-		entry.etag.Valid = true
-		entry.etag.String = headers.Get("etag")
+		if v := headers.Get("content-type"); v != "" {
+			entry.contentType.Valid = true
+			entry.contentType.String = v
+		}
+		if v := headers.Get("etag"); v != "" {
+			entry.etag.Valid = true
+			entry.etag.String = v
+		}
 		if object != nil {
-			size, hash, err := object.Close()
-			if err != nil {
-				*entry = respEntry{err: fmt.Errorf("close object %s-%s: %w", req.build, req.file, err)}
-				return
+			var size int64
+			var hash string
+			if stat := objects.Stat(objpath, objects.HashFromETag(entry.etag.String)); stat != nil {
+				// File exists. The object was not written to, so reuse metadata
+				// from the file.
+				size = stat.Size()
+				hash = strings.ToLower(stat.Name())
+				object.Remove()
+			} else {
+				if entry.contentLength.Valid {
+					object.ExpectSize(entry.contentLength.Int64)
+				}
+				if size, hash, err = object.Close(); err != nil {
+					*entry = respEntry{err: fmt.Errorf("close object %s-%s: %w", req.build, req.file, err)}
+					return
+				}
 			}
 			entry.status = StatusComplete
 			entry.qAction |= qMetadata
@@ -429,6 +445,7 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 			entry.size = size
 		}
 	} else {
+		object.Remove()
 		if respStatus == 403 {
 			// 403 is expected if the file does not exist (or is not exposed).
 			// Most file combinations will be this, and the status is already
