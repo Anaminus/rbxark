@@ -9,130 +9,82 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/anaminus/but"
-	"github.com/anaminus/rbxark/objects"
-	"github.com/anaminus/rbxark/pkgman"
 	"github.com/jessevdk/go-flags"
 )
 
 var Main, CancelMain = context.WithCancel(context.Background())
 
-var FlagOptions struct{}
+var FlagOptions struct {
+	Config string `short:"c" long:"config" description:"Path to configuration file. Defaults to the database file path appended with '.json'."`
+}
 var FlagParser = flags.NewParser(&FlagOptions, flags.Default)
 
 func init() {
 	log.SetFlags(0)
 }
 
-func main() {
-	// _, err := FlagParser.Parse()
-	// if err != nil {
-	// 	return
-	// }
+// Gets a database path from a list of arguments and opens the database. Returns
+// the database and the directory of the database.
+func OpenDatabase(args []string) (db *sql.DB, dir string, err error) {
+	if len(args) == 0 {
+		return nil, "", fmt.Errorf("expected database file")
+	}
+	if db, err = sql.Open("sqlite3", args[0]); err != nil {
+		return nil, "", err
+	}
+	return db, args[0] + ".json", nil
+}
 
+func LoadConfig(path string) (config *Config, err error) {
+	if FlagOptions.Config != "" {
+		path = FlagOptions.Config
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	config = &Config{}
+	err = json.NewDecoder(f).Decode(config)
+	f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	return config, nil
+}
+
+func MonitorSignals(cancel context.CancelFunc) {
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt)
 		for {
 			select {
 			case <-sig:
-				CancelMain()
+				cancel()
 				return
 			}
 		}
 	}()
+}
 
-	config := &Config{}
-	{
-		f, err := os.Open("config.json")
-		if err == nil {
-			but.IfFatal(json.NewDecoder(f).Decode(config), "read config")
-			f.Close()
-		}
+type OptionTags map[string]*flags.Option
+
+func (tags OptionTags) AddTo(cmd *flags.Command, err error) (*flags.Command, error) {
+	if cmd == nil {
+		return cmd, err
 	}
-
-	db, err := sql.Open("sqlite3", "ark.db")
-	but.IfFatal(err, "open database")
-
-	action := Action{Context: Main}
-	but.IfFatal(action.Init(db), "initialize database")
-
-	fetcher := NewFetcher(nil, 32, config.RateLimit)
-
-	if len(os.Args) < 2 {
-		return
+	for name, info := range tags {
+		opt := cmd.FindOptionByLongName(name)
+		if opt == nil {
+			continue
+		}
+		opt.Description = info.Description
+		opt.ValueName = info.ValueName
+		opt.Default = info.Default
 	}
-	switch os.Args[1] {
-	case "merge-filenames":
-		newFiles, err := action.MergeFiles(db, config.BuildFiles)
-		but.IfFatal(err, "merge files")
-		log.Printf("merged %d new files\n", newFiles)
-	case "merge-servers":
-		newServers, err := action.MergeServers(db, config.Servers)
-		but.IfFatal(err, "merge servers")
-		log.Printf("merged %d new servers\n", newServers)
-	case "fetch-builds":
-		file := config.DeployHistory
-		if file == "" {
-			file = "DeployHistory.txt"
-		}
-		but.IfFatal(action.FetchBuilds(db, fetcher, file), "fetch builds")
-	case "generate-files":
-		newFiles, err := action.GenerateFiles(db)
-		but.IfFatal(err, "generate files")
-		log.Printf("generated %d new files\n", newFiles)
-	case "fetch-headers":
-		stats := Stats{}
-		err := action.FetchContent(db, fetcher, "", false, 4096, stats)
-		but.IfError(err, "fetch headers")
-		but.Log(stats.String())
-	case "fetch-files":
-		stats := Stats{}
-		err := action.FetchContent(db, fetcher, config.ObjectsPath, false, 64, stats)
-		but.IfError(err, "fetch files")
-		but.Fatal(stats.String())
-	case "find-filenames":
-		if config.ObjectsPath == "" {
-			but.Fatal("unspecified objects path")
-		}
+	return cmd, err
+}
 
-		names, err := action.GetFilenames(db)
-		but.IfFatal(err, "get filenames")
-
-		filenames := map[string]struct{}{}
-		for _, name := range names {
-			filenames[name] = struct{}{}
-		}
-
-		manifests, err := action.FindManifests(db)
-		but.IfFatal(err, "find manifests")
-
-		for _, hash := range manifests {
-			path := objects.Path(config.ObjectsPath, hash)
-			if path == "" {
-				but.IfError(fmt.Errorf("%s: file does not exist", hash))
-				continue
-			}
-			man, err := os.Open(path)
-			if err != nil {
-				but.IfError(fmt.Errorf("%s: %w", hash, err))
-				continue
-			}
-			entries, err := pkgman.Decode(man)
-			if err != nil {
-				but.IfError(fmt.Errorf("%s: %w", hash, err))
-				continue
-			}
-			for _, entry := range entries {
-				if _, ok := filenames[entry.Name]; ok {
-					continue
-				}
-				log.Println(entry.Name)
-				filenames[entry.Name] = struct{}{}
-			}
-		}
-
-	default:
-		but.Fatalf("unknown command %q", os.Args[1])
-	}
+func main() {
+	MonitorSignals(CancelMain)
+	FlagParser.Parse()
 }
