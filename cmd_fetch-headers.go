@@ -54,6 +54,11 @@ func (cmd *CmdFetchHeaders) Execute(args []string) error {
 		return err
 	}
 
+	query, err := LoadFilter(config.Filters, "headers")
+	if err != nil {
+		return err
+	}
+
 	action := Action{Context: Main}
 	if err := action.Init(db); err != nil {
 		return err
@@ -62,7 +67,7 @@ func (cmd *CmdFetchHeaders) Execute(args []string) error {
 	fetcher := NewFetcher(nil, cmd.Workers, config.RateLimit)
 
 	stats := Stats{}
-	err = action.FetchContent(db, fetcher, "", cmd.Recheck, cmd.BatchSize, stats)
+	err = action.FetchContent(db, fetcher, "", query, cmd.Recheck, cmd.BatchSize, stats)
 	log.Println(stats)
 	return err
 }

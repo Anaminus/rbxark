@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anaminus/rbxark/filter"
 	"github.com/anaminus/rbxark/objects"
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
@@ -533,7 +534,7 @@ func (stats Stats) String() string {
 //
 // The rate argument specifies how many files are processed before commiting to
 // the database. A value of 0 or less uses DefaultCommitRate.
-func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, recheck bool, rate int, stats Stats) error {
+func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filter.Query, recheck bool, rate int, stats Stats) error {
 	if rate <= 0 {
 		rate = DefaultCommitRate
 	}
@@ -554,24 +555,33 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, recheck boo
 	for {
 		const query = `
 			WITH temp AS (
-				SELECT files.rowid, servers.url, builds.hash, filenames.name
+				SELECT
+					files.rowid AS id,
+					servers.url AS _server,
+					builds.hash AS _build,
+					filenames.name AS _file
 				FROM files, builds, filenames, build_servers, servers
 				WHERE files.status BETWEEN ? AND ?
 				AND builds.rowid == files.build
 				AND filenames.rowid == files.filename
 				AND build_servers.build == files.build
 				AND build_servers.server == servers.rowid
+				%s
 				LIMIT ?
 			) SELECT * FROM temp
 			-- Collapse duplicates caused by build being available from multiple
 			-- servers. Note: this really slows down the query.
-			GROUP BY hash, name
+			GROUP BY _build, _file
 		`
 		// TODO: Retain duplicate hashes; when a server fails, try the next
 		// server. Requires maintaining a map of successful hashes for the
 		// duration of the transaction. The map only needs to be as large as
 		// rate; successful hashes will not be pulled out of the database again.
-		rows, err := db.QueryContext(a.Context, query, minstatus, maxstatus, rate)
+
+		params := []interface{}{minstatus, maxstatus}
+		params = append(params, q.Params...)
+		params = append(params, rate)
+		rows, err := db.QueryContext(a.Context, fmt.Sprintf(query, q.Expr), params...)
 		if err != nil {
 			return fmt.Errorf("select files: %w", err)
 		}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/anaminus/rbxark/filter"
 	"github.com/jessevdk/go-flags"
 )
 
@@ -50,6 +51,33 @@ func LoadConfig(path string) (config *Config, err error) {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	return config, nil
+}
+
+func LoadFilter(list []string, typ string) (query filter.Query, err error) {
+	filters := &filter.List{}
+	filters.AllowTypes(
+		"headers",
+		"files",
+	)
+	filters.AllowVars("headers",
+		"server",
+		"build",
+		"file",
+	)
+	filters.AllowVars("files",
+		"server",
+		"build",
+		"file",
+	)
+	for i, f := range list {
+		if err := filters.Append(f); err != nil {
+			return filter.Query{}, fmt.Errorf("load filters: filter[%d]: %w", i, err)
+		}
+	}
+	if query, err = filters.AsQuery(typ); err != nil {
+		return filter.Query{}, fmt.Errorf("load filters: %q: %w", typ, err)
+	}
+	return query, nil
 }
 
 func MonitorSignals(cancel context.CancelFunc) {

@@ -55,6 +55,11 @@ func (cmd *CmdFetchFiles) Execute(args []string) error {
 		return err
 	}
 
+	query, err := LoadFilter(config.Filters, "files")
+	if err != nil {
+		return err
+	}
+
 	action := Action{Context: Main}
 	if err := action.Init(db); err != nil {
 		return err
@@ -63,7 +68,7 @@ func (cmd *CmdFetchFiles) Execute(args []string) error {
 	fetcher := NewFetcher(nil, cmd.Workers, config.RateLimit)
 
 	stats := Stats{}
-	err = action.FetchContent(db, fetcher, config.ObjectsPath, cmd.Recheck, cmd.BatchSize, stats)
+	err = action.FetchContent(db, fetcher, config.ObjectsPath, query, cmd.Recheck, cmd.BatchSize, stats)
 	log.Println(stats)
 	return err
 }

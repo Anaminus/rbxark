@@ -13,6 +13,8 @@ type Config struct {
 	DeployFiles []string `json:"deploy_files"`
 	// List of potential files per version hash.
 	BuildFiles []string `json:"build_files"`
+	// List of filters to apply when selecting files.
+	Filters []string `json:"filters"`
 }
 
 func (c *Config) GetDeployHistory() string {
