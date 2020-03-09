@@ -608,6 +608,15 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, recheck boo
 		log.Printf("fetching %d files...", len(reqs))
 		wg.Wait()
 
+		// TODO: fetching is suboptimal because all downloads in the current
+		// transaction must complete before the next set of transactions can
+		// begin. Downloads from subsequent transactions should start while the
+		// downloads from the current transaction are still working.
+		//
+		// SOLUTION: select a larger number of files, but continue to commit
+		// them at the usual rate. The GROUP BY clause makes many results slow
+		// to retrieve, so that should be resolved first.
+
 		tx, err := db.BeginTx(a.Context, nil)
 		if err != nil {
 			return fmt.Errorf("begin transaction: %w", err)
