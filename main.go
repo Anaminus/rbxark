@@ -54,8 +54,8 @@ func LoadConfig(path string) (config *Config, err error) {
 }
 
 func LoadFilter(list []string, typ string) (query filter.Query, err error) {
-	filters := &filter.List{}
-	filters.AllowTypes(
+	filters := &filter.Filter{}
+	filters.AllowDomains(
 		"headers",
 		"files",
 	)

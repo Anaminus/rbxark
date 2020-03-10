@@ -11,28 +11,88 @@ import (
 	"unicode"
 )
 
-// List contains a number of filter expressions.
-type List struct {
-	entries map[string]*entry
-	// Allowed types.
-	types map[string]struct{}
+// Filter contains a number of rules. Rules are divided into rule sets, each
+// denoted by a domain.
+type Filter struct {
+	ruleSets map[string]*ruleSet
+	// Allowed domain names.
+	domains map[string]struct{}
 }
 
-type entry struct {
-	items []Item
-	// Allowed variables.
+// A list of rules per domain.
+type ruleSet struct {
+	// List of rules.
+	rules []ruleElement
+	// Allowed variable names.
 	vars map[string]struct{}
 }
 
-type Item struct {
+// A single rule.
+type ruleElement struct {
 	Exclude bool
 	Expr    ast.Expr
 }
 
+// Whether a string contains only letters and digits.
+func isWord(s string) bool {
+	for _, c := range s {
+		if !unicode.IsLetter(c) && !unicode.IsDigit(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// Gets a ruleSet from the given domain.
+func (l *Filter) getRuleSet(domain string) *ruleSet {
+	if l.ruleSets == nil {
+		l.ruleSets = map[string]*ruleSet{}
+	}
+	if l.ruleSets[domain] == nil {
+		l.ruleSets[domain] = &ruleSet{}
+	}
+	return l.ruleSets[domain]
+}
+
+// AllowDomains sets the filter to allow only specified values as domains. The
+// given strings are included as allowed values. Non-word values are skipped.
+func (l *Filter) AllowDomains(types ...string) *Filter {
+	if l.domains == nil {
+		l.domains = make(map[string]struct{}, len(types))
+	}
+	for _, t := range types {
+		if isWord(t) {
+			l.domains[t] = struct{}{}
+		}
+	}
+	return l
+}
+
+// AllowVars sets the list to allow only specified values as variables for the
+// given domain. The given strings are included as allowed values. Non-word
+// values are skipped.
+func (l *Filter) AllowVars(domain string, vars ...string) *Filter {
+	if !isWord(domain) {
+		return l
+	}
+	ruleSet := l.getRuleSet(domain)
+	if ruleSet.vars == nil {
+		ruleSet.vars = map[string]struct{}{}
+	}
+	for _, v := range vars {
+		if isWord(v) {
+			ruleSet.vars[v] = struct{}{}
+		}
+	}
+	return l
+}
+
+// Trims a string by skipping space characters.
 func skipSpace(s string) string {
 	return strings.TrimLeftFunc(s, unicode.IsSpace)
 }
 
+// Trims a string by parsing a word.
 func parseWord(s string) (word, next string) {
 	s = skipSpace(s)
 	for i, c := range s {
@@ -43,99 +103,47 @@ func parseWord(s string) (word, next string) {
 	return s, ""
 }
 
-func isWord(s string) bool {
-	for _, c := range s {
-		if !unicode.IsLetter(c) && !unicode.IsDigit(c) {
-			return false
-		}
-	}
-	return true
-}
-
-func (l *List) getEntry(typ string) *entry {
-	if l.entries == nil {
-		l.entries = map[string]*entry{}
-	}
-	if l.entries[typ] == nil {
-		l.entries[typ] = &entry{}
-	}
-	return l.entries[typ]
-}
-
-// AllowTypes sets the list to allow only specified values as filter types. The
-// given strings are included as allowed values. Non-word values are skipped.
-func (l *List) AllowTypes(types ...string) *List {
-	if l.types == nil {
-		l.types = make(map[string]struct{}, len(types))
-	}
-	for _, t := range types {
-		if isWord(t) {
-			l.types[t] = struct{}{}
-		}
-	}
-	return l
-}
-
-// AllowVars sets the list to allow only specified values as variables for the
-// given filter type. The given strings are included as allowed values. Non-word
-// values are skipped.
-func (l *List) AllowVars(typ string, vars ...string) *List {
-	if !isWord(typ) {
-		return l
-	}
-	e := l.getEntry(typ)
-	if e.vars == nil {
-		e.vars = map[string]struct{}{}
-	}
-	for _, v := range vars {
-		if isWord(v) {
-			e.vars[v] = struct{}{}
-		}
-	}
-	return l
-}
-
-// Append adds a filter to the list.
-func (l *List) Append(filter string) (err error) {
-	var item Item
-	filter = skipSpace(filter)
-	action, filter := parseWord(filter)
+// Append adds a rule to the filter.
+func (l *Filter) Append(rule string) (err error) {
+	var r ruleElement
+	rule = skipSpace(rule)
+	action, rule := parseWord(rule)
 	switch action {
 	case "include":
-		item.Exclude = false
+		r.Exclude = false
 	case "exclude":
-		item.Exclude = true
+		r.Exclude = true
 	default:
 		return fmt.Errorf("expected include or exclude keyword")
 	}
 
-	filter = skipSpace(filter)
-	typ, filter := parseWord(filter)
+	rule = skipSpace(rule)
+	typ, rule := parseWord(rule)
 	if typ == "" {
 		return fmt.Errorf("expected filter type")
 	}
-	if l.types != nil {
-		if _, ok := l.types[typ]; !ok {
+	if l.domains != nil {
+		if _, ok := l.domains[typ]; !ok {
 			return fmt.Errorf("invalid filter type %q", typ)
 		}
 	}
 
-	filter = skipSpace(filter)
-	if len(filter) == 0 {
-		item.Expr = ast.NewIdent("true")
+	rule = skipSpace(rule)
+	if len(rule) == 0 {
+		r.Expr = ast.NewIdent("true")
 	} else {
-		if !strings.HasPrefix(filter, ":") {
+		if !strings.HasPrefix(rule, ":") {
 			return fmt.Errorf("expected \":\"")
 		}
-		filter = filter[1:]
-		filter = skipSpace(filter)
-		item.Expr, err = parser.ParseExpr(filter)
+		rule = rule[1:]
+		rule = skipSpace(rule)
+		r.Expr, err = parser.ParseExpr(rule)
 		if err != nil {
 			return fmt.Errorf("expected Go expression: %w", err)
 		}
 	}
-	e := l.getEntry(typ)
-	e.items = append(e.items, item)
+	ruleSet := l.getRuleSet(typ)
+	ruleSet.rules = append(ruleSet.rules, r)
 	return nil
 }
 
@@ -223,46 +231,46 @@ func asQuery(b *strings.Builder, args *[]interface{}, vars, used map[string]stru
 	return nil
 }
 
-// AsQuery formats the filter type as a SQLite query expression. Literals are
-// replaced with parameters, and returned as arguments to be passed to the query
-// executor.
+// AsQuery formats the rule set specified by the given domain as a SQLite query
+// expression. Literals are replaced with parameters, and returned as arguments
+// to be passed to the query executor.
 //
-// The expression is prefixed with the AND operator. If the entry contains no
-// items, then the expression is empty.
+// The expression is prefixed with the AND operator. If the rule set contains no
+// rules, then the expression is empty.
 //
 // Variables are prefixed with an underscore.
-func (l *List) AsQuery(typ string) (query Query, err error) {
-	if l.types != nil {
-		if _, ok := l.types[typ]; !ok {
-			return Query{}, fmt.Errorf("invalid filter type %q", typ)
+func (l *Filter) AsQuery(domain string) (query Query, err error) {
+	if l.domains != nil {
+		if _, ok := l.domains[domain]; !ok {
+			return Query{}, fmt.Errorf("invalid filter type %q", domain)
 		}
 	}
-	entry, ok := l.entries[typ]
-	if !ok || len(entry.items) == 0 {
+	ruleSet, ok := l.ruleSets[domain]
+	if !ok || len(ruleSet.rules) == 0 {
 		return query, nil
 	}
 	var b strings.Builder
 	query.vars = map[string]struct{}{}
 	b.WriteString("AND ( ")
-	for i := 1; i < len(entry.items); i++ {
-		if entry.items[i].Exclude {
+	for i := 1; i < len(ruleSet.rules); i++ {
+		if ruleSet.rules[i].Exclude {
 			b.WriteString("( ")
 		}
 	}
-	for i, item := range entry.items {
+	for i, rule := range ruleSet.rules {
 		if i > 0 {
-			if item.Exclude {
+			if rule.Exclude {
 				b.WriteString(") AND ")
 			} else {
 				b.WriteString("OR ")
 			}
 		}
-		if item.Exclude {
+		if rule.Exclude {
 			b.WriteString("NOT ")
 		}
 		b.WriteString("( ")
-		if err := asQuery(&b, &query.Params, entry.vars, query.vars, item.Expr); err != nil {
-			return Query{}, fmt.Errorf("item %s[%d]: %w", typ, i, err)
+		if err := asQuery(&b, &query.Params, ruleSet.vars, query.vars, rule.Expr); err != nil {
+			return Query{}, fmt.Errorf("item %s[%d]: %w", domain, i, err)
 		}
 		b.WriteString(") ")
 	}
@@ -271,6 +279,7 @@ func (l *List) AsQuery(typ string) (query Query, err error) {
 	return query, nil
 }
 
+// Query contains the query string and parameters of an SQLite query.
 type Query struct {
 	// The query expression.
 	Expr string
@@ -280,7 +289,7 @@ type Query struct {
 	vars map[string]struct{}
 }
 
-// HasVar reports whether the given variable is referenced with the query.
+// HasVar reports whether the given variable is referenced by the query.
 func (expr Query) HasVar(v string) bool {
 	_, ok := expr.vars[v]
 	return ok
