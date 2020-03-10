@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -147,10 +146,10 @@ func (l *Filter) Append(rule string) (err error) {
 	return nil
 }
 
-func asQuery(b *strings.Builder, args *[]interface{}, vars, used map[string]struct{}, e ast.Expr) error {
+func asQuery(b *strings.Builder, args *[]interface{}, vars map[string]struct{}, e ast.Expr) error {
 	switch e := e.(type) {
 	case *ast.BinaryExpr:
-		if err := asQuery(b, args, vars, used, e.X); err != nil {
+		if err := asQuery(b, args, vars, e.X); err != nil {
 			return fmt.Errorf("left expr: %w", err)
 		}
 		switch e.Op {
@@ -173,12 +172,12 @@ func asQuery(b *strings.Builder, args *[]interface{}, vars, used map[string]stru
 		default:
 			return fmt.Errorf("unexpected operator %q", e.Op)
 		}
-		if err := asQuery(b, args, vars, used, e.Y); err != nil {
+		if err := asQuery(b, args, vars, e.Y); err != nil {
 			return fmt.Errorf("right expr: %w", err)
 		}
 	case *ast.ParenExpr:
 		b.WriteString("( ")
-		if err := asQuery(b, args, vars, used, e.X); err != nil {
+		if err := asQuery(b, args, vars, e.X); err != nil {
 			return fmt.Errorf("paren expr: %w", err)
 		}
 		b.WriteString(") ")
@@ -190,7 +189,7 @@ func asQuery(b *strings.Builder, args *[]interface{}, vars, used map[string]stru
 		default:
 			return fmt.Errorf("unexpected operator %q", e.Op)
 		}
-		if err := asQuery(b, args, vars, used, e.X); err != nil {
+		if err := asQuery(b, args, vars, e.X); err != nil {
 			return fmt.Errorf("unary expr: %w", err)
 		}
 	case *ast.Ident:
@@ -213,7 +212,6 @@ func asQuery(b *strings.Builder, args *[]interface{}, vars, used map[string]stru
 		b.WriteByte('_')
 		b.WriteString(e.Name)
 		b.WriteByte(' ')
-		used[e.Name] = struct{}{}
 
 	case *ast.BasicLit:
 		switch e.Kind {
@@ -250,7 +248,6 @@ func (l *Filter) AsQuery(domain string) (query Query, err error) {
 		return query, nil
 	}
 	var b strings.Builder
-	query.vars = map[string]struct{}{}
 	b.WriteString("AND ( ")
 	for i := 1; i < len(ruleSet.rules); i++ {
 		if ruleSet.rules[i].Exclude {
@@ -269,7 +266,7 @@ func (l *Filter) AsQuery(domain string) (query Query, err error) {
 			b.WriteString("NOT ")
 		}
 		b.WriteString("( ")
-		if err := asQuery(&b, &query.Params, ruleSet.vars, query.vars, rule.Expr); err != nil {
+		if err := asQuery(&b, &query.Params, ruleSet.vars, rule.Expr); err != nil {
 			return Query{}, fmt.Errorf("item %s[%d]: %w", domain, i, err)
 		}
 		b.WriteString(") ")
@@ -285,22 +282,4 @@ type Query struct {
 	Expr string
 	// Values of parameters to be passed to the query.
 	Params []interface{}
-	// Variables that are referenced in the query string.
-	vars map[string]struct{}
-}
-
-// HasVar reports whether the given variable is referenced by the query.
-func (expr Query) HasVar(v string) bool {
-	_, ok := expr.vars[v]
-	return ok
-}
-
-// Vars returns a list of variables referenced by the query.
-func (expr Query) Vars() []string {
-	vars := make([]string, 0, len(expr.vars))
-	for v := range expr.vars {
-		vars = append(vars, v)
-	}
-	sort.Strings(vars)
-	return vars
 }
