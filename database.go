@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anaminus/rbxark/filter"
+	"github.com/anaminus/rbxark/filters"
 	"github.com/anaminus/rbxark/objects"
 	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
@@ -534,7 +534,7 @@ func (stats Stats) String() string {
 //
 // The rate argument specifies how many files are processed before commiting to
 // the database. A value of 0 or less uses DefaultCommitRate.
-func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filter.Query, recheck bool, rate int, stats Stats) error {
+func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Query, recheck bool, rate int, stats Stats) error {
 	if rate <= 0 {
 		rate = DefaultCommitRate
 	}
