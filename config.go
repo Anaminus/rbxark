@@ -16,10 +16,3 @@ type Config struct {
 	// List of filters to apply when selecting files.
 	Filters []string `json:"filters"`
 }
-
-func (c *Config) GetDeployHistory() string {
-	if c.DeployHistory == "" {
-		return "DeployHistory.txt"
-	}
-	return c.DeployHistory
-}
