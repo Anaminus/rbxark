@@ -26,7 +26,7 @@ func init() {
 		},
 	}.AddTo(FlagParser.AddCommand(
 		"fetch-files",
-		"Download headers of unchecked files.",
+		"Download content of unchecked files.",
 		`Scans for files with the Unchecked status and downloads their content
 		to the configured objects path. A hit writes the file to the objects
 		path, adds the response's headers to the database, and sets the file's

@@ -8,8 +8,9 @@ func init() {
 	FlagParser.AddCommand(
 		"generate-files",
 		"Generate combinations of possible files.",
-		`Inserts into the data combinations of build hashes and file names that
-		aren't already present. Files are added with the Unchecked status.`,
+		`Inserts into the database combinations of build hashes and file names
+		that aren't already present. Files are added with the Unchecked
+		status.`,
 		&CmdGenerateFiles{},
 	)
 }

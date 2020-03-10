@@ -15,7 +15,7 @@ func init() {
 		"find-filenames",
 		"Find file names from rbxPkgManifest files.",
 		`Scans downloaded rbxPkgManifest files for file names that have not been
-		added to the database. The results printed, but are not added to the
+		added to the database. The results are printed, but are not added to the
 		database.`,
 		&CmdFindFilenames{},
 	)
