@@ -32,6 +32,22 @@ const (
 	StatusComplete  FileStatus = +2 // File exists, content also retrieved.
 )
 
+func (s FileStatus) String() string {
+	switch s {
+	case StatusNonextant:
+		return "Nonextant"
+	case StatusMissing:
+		return "Missing"
+	case StatusUnchecked:
+		return "Unchecked"
+	case StatusPartial:
+		return "Partial"
+	case StatusComplete:
+		return "Complete"
+	}
+	return ""
+}
+
 type Executor interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
@@ -438,6 +454,7 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 	}
 	entry.id = req.id
 	entry.respStatus = respStatus
+	skipped := false
 	if 200 <= respStatus && respStatus < 300 {
 		entry.status = StatusPartial
 		entry.qAction |= qHeaderFull
@@ -466,6 +483,7 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 				size = stat.Size()
 				hash = strings.ToLower(stat.Name())
 				object.Remove()
+				skipped = true
 			} else {
 				if entry.contentLength.Valid {
 					object.ExpectSize(entry.contentLength.Int64)
@@ -501,7 +519,11 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 			entry.qAction |= qHeaderStatus
 		}
 	}
-	log.Printf("fetched (%d) %s-%s", req.id, req.build, req.file)
+	var skip string
+	if skipped {
+		skip = "S"
+	}
+	log.Printf("fetch %-9s %32s %1s from %s-%s (%d)", entry.status, entry.hash, skip, req.build, req.file, req.id)
 }
 
 type Stats map[int]int
