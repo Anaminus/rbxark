@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -42,13 +43,16 @@ func LoadConfig(path string) (config *Config, err error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
+		return nil, fmt.Errorf("open config: %w", err)
 	}
 	config = &Config{}
 	err = json.NewDecoder(f).Decode(config)
 	f.Close()
 	if err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		if serr := (*json.SyntaxError)(nil); errors.As(err, &serr) {
+			return nil, fmt.Errorf("decode config: offset %d: %w", serr.Offset, serr)
+		}
+		return nil, fmt.Errorf("decode config: %w", err)
 	}
 	return config, nil
 }
