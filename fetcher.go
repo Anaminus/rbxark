@@ -6,11 +6,36 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/anaminus/rbxark/objects"
 	"github.com/robloxapi/rbxdump/histlog"
 	"golang.org/x/time/rate"
 )
+
+type HashChecker struct {
+	h map[string]struct{}
+	m sync.Mutex
+}
+
+// Check returns whether the given hash is in the map. If it isn't, the hash is
+// added to the map.
+func (h *HashChecker) Check(hash string) bool {
+	if h == nil {
+		return false
+	}
+	h.m.Lock()
+	defer h.m.Unlock()
+	if h.h == nil {
+		h.h = map[string]struct{}{}
+	}
+	_, ok := h.h[hash]
+	if ok {
+		return true
+	}
+	h.h[hash] = struct{}{}
+	return false
+}
 
 type job struct {
 	req    *http.Request
@@ -117,7 +142,7 @@ func (f *Fetcher) FetchDeployHistory(ctx context.Context, url string) (stream hi
 // FetchContent fetches information about a file from url. If w is not nil, the
 // content of the file is written to it. Otherwise, just the headers of the
 // response are returned.
-func (f *Fetcher) FetchContent(ctx context.Context, url string, objpath string, w io.Writer) (status int, headers http.Header, err error) {
+func (f *Fetcher) FetchContent(ctx context.Context, url string, objpath string, hashes *HashChecker, w io.Writer) (status int, headers http.Header, err error) {
 	method := "GET"
 	if w == nil {
 		method = "HEAD"
@@ -134,11 +159,19 @@ func (f *Fetcher) FetchContent(ctx context.Context, url string, objpath string, 
 		resp.Body.Close()
 		return resp.StatusCode, resp.Header, nil
 	}
-	if objpath != "" && objects.Exists(objpath, objects.HashFromETag(resp.Header.Get("etag"))) {
-		// The etag, converted to a hash, was found in the cache; download can
-		// be skipped.
-		resp.Body.Close()
-		return resp.StatusCode, resp.Header, nil
+	if hash := objects.HashFromETag(resp.Header.Get("etag")); hash != "" {
+		if hashes.Check(hash) {
+			// A file with the same hash is already being downloaded; skip.
+			resp.Body.Close()
+			return resp.StatusCode, resp.Header, nil
+		}
+		if objpath != "" {
+			if objects.Exists(objpath, hash) {
+				// The hash was found in the cache; download can be skipped.
+				resp.Body.Close()
+				return resp.StatusCode, resp.Header, nil
+			}
+		}
 	}
 	if _, err = io.Copy(w, resp.Body); err != nil {
 		return 0, nil, fmt.Errorf("%s: write file: %w", url, err)
