@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 
 	"github.com/anaminus/rbxark/filters"
 	"github.com/jessevdk/go-flags"
@@ -53,6 +54,10 @@ func LoadConfig(path string) (config *Config, err error) {
 			return nil, fmt.Errorf("decode config: offset %d: %w", serr.Offset, serr)
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	if config.ObjectsPath != "" && !filepath.IsAbs(config.ObjectsPath) {
+		// Path is relative to config file.
+		config.ObjectsPath = filepath.Join(filepath.Dir(path), config.ObjectsPath)
 	}
 	return config, nil
 }
