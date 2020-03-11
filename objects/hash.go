@@ -59,15 +59,17 @@ func Path(objpath, hash string) string {
 	return filepath.Join(objpath, hash[:2], hash)
 }
 
-// HashFromETag attempts to convert an ETag to a valid hash. Return an empty
+// HashFromETag attempts to convert an ETag to a valid hash. Returns an empty
 // string if the hash could not be converted.
 func HashFromETag(etag string) string {
-	hash := strings.Trim(strings.ToLower(etag), "\"")
-	if i := strings.Index(hash, "-"); i >= 0 {
-		hash = hash[:i]
+	etag = strings.ToLower(etag)
+	etag = strings.TrimPrefix(etag, "w/")
+	etag = strings.Trim(etag, "\"")
+	if i := strings.Index(etag, "-"); i >= 0 {
+		etag = etag[:i]
 	}
-	if !IsHash(hash) {
+	if !IsHash(etag) {
 		return ""
 	}
-	return hash
+	return etag
 }
