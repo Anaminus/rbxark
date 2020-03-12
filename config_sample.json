@@ -1,0 +1,154 @@
+{
+	// Path to the objects directory. Relative paths are relative to the config
+	// file.
+	"objects_path": "~/rbxark/objects",
+
+	// Mode used to manage objects. "direct" or "git".
+	//
+	// Direct mode manages objects directly as files. Files are named by the MD5
+	// hash of their content, and are located under subdirectories named by the
+	// first two characters of the hash. e.g.
+	//
+	//     ~/rbxark/objects/01/0123456789abcdef0123456789abcdef
+	//
+	// Git mode manages objects in a Git repository. Each branch represents one
+	// server, and each commit represents one build. Commits are amended and
+	// rebased as required to maintain the chronological order of builds and
+	// presence of files, so it is not safe to pull from this repository.
+	"objects_mode": "direct",
+
+	// How many requests can be made per second. Less than 0 means unlimited.
+	// Use in case a server enforces rate-limiting.
+	"rate_limit": -1,
+
+	// The file on a server from which builds are scanned.
+	"deploy_history": "DeployHistory.txt",
+
+	// List of servers that should be merged into the database. Each value is a
+	// string containing a URL prefix.
+	"servers": [
+		"https://setup.rbxcdn.com",
+		"https://s3.amazonaws.com/setup.gametest1.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.gametest2.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.gametest3.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.gametest4.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.gametest5.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.sitetest1.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.sitetest2.robloxlabs.com",
+		"https://s3.amazonaws.com/setup.sitetest3.robloxlabs.com",
+		"https://setup.rbxcdn.com/mac",
+		"https://s3.amazonaws.com/setup.gametest1.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.gametest2.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.gametest3.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.gametest4.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.gametest5.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.sitetest1.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.sitetest2.robloxlabs.com/mac",
+		"https://s3.amazonaws.com/setup.sitetest3.robloxlabs.com/mac"
+	],
+
+	// List of files associated with a server rather a build.
+	"server_files": [
+		"DeployHistory.txt",
+		"version",
+		"version.txt",
+		"versionQTStudio"
+	],
+
+	// List of possible filenames that a build might have.
+	"build_files": [
+		"API-Dump.json",
+		"BootstrapperQTStudioVersion.txt",
+		"BuiltInPlugins.zip",
+		"BuiltInStandalonePlugins.zip",
+		"content-avatar.zip",
+		"content-configs.zip",
+		"content-fonts.zip",
+		"content-luapackages.zip",
+		"content-materials.zip",
+		"content-models.zip",
+		"content-music.zip",
+		"content-particles.zip",
+		"content-platform-fonts.zip",
+		"content-qt_translations.zip",
+		"content-scripts.zip",
+		"content-sky.zip",
+		"content-sounds.zip",
+		"content-terrain.zip",
+		"content-textures.zip",
+		"content-textures2.zip",
+		"content-textures3.zip",
+		"content-translations.zip",
+		"extracontent-luapackages.zip",
+		"extracontent-models.zip",
+		"extracontent-scripts.zip",
+		"extracontent-textures.zip",
+		"extracontent-translations.zip",
+		"imageformats.zip",
+		"Libraries.zip",
+		"LibrariesQt5.zip",
+		"NPRobloxProxy.zip",
+		"Plugins.zip",
+		"Qml.zip",
+		"rbxManifest.txt",
+		"rbxPkgManifest.txt",
+		"RCC-content.zip",
+		"RCC-Libraries.zip",
+		"RCC-redist.zip",
+		"RCCService.zip",
+		"redist.zip",
+		"Roblox.dmg",
+		"Roblox.exe",
+		"Roblox.zip",
+		"RobloxApp.zip",
+		"RobloxPlayerLauncher.exe",
+		"RobloxProxy.zip",
+		"RobloxStudio.zip",
+		"RobloxStudioApp.zip",
+		"RobloxStudioLauncher.exe",
+		"RobloxStudioLauncherBeta.exe",
+		"RobloxStudioVersion.txt",
+		"RobloxVersion.txt",
+		"shaders.zip",
+		"ssl.zip"
+	],
+
+	// List of filters to apply when fetching content.
+	//
+	// Each string specifies a rule. The first token indicates whether files
+	// matching the rule's expression should be included or excluded in the
+	// results.
+	//
+	// The second token indicates what the rule applies to:
+	//
+	// - content: applies the rule only when downloading the content of files.
+	// - headers: applies the rule only when downloading the headers of files.
+	//
+	// This is followed by a ":" token, then the remainder of the rule is an
+	// expression. Omitting the : and expression is the same as the expression
+	// `true`.
+	//
+	// The expression syntax matches the syntax of a Go expression. Only certain
+	// operators are allowed. The following variables are defined:
+	//
+	// - server: The URL prefix indicating the server from which the file can be
+	//   downloaded. Has no trailing slash.
+	//     - Example: https://setup.rbxcdn.com
+	// - build: The version hash of the build the file is a part of.
+	//     - Example: version-0123456789abcdef
+	// - file: The name of the file.
+	//     - Example: API-Dump.json
+	//
+	// Rules are applied in order.
+	//
+	// The following example ruleset excludes all files, then includes all files
+	// only from the main server, as well as certain interesting files from all
+	// other servers.
+	"filters": [
+		"exclude content",
+		"include content : server == \"https://setup.rbxcdn.com\"",
+		"include content : file == \"API-Dump.json\"",
+		"include content : file == \"RobloxApp.zip\"",
+		"include content : file == \"RobloxStudio.zip\""
+	]
+}
