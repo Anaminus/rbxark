@@ -66,7 +66,7 @@ func LoadFilter(list []string, typ string) (query filters.Query, err error) {
 	filter := &filters.Filter{}
 	filter.AllowDomains(
 		"headers",
-		"files",
+		"content",
 	)
 	filter.AllowVars("headers",
 		"server",
