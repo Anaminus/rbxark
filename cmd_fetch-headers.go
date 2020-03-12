@@ -13,7 +13,7 @@ func init() {
 			Default:     []string{"32"},
 		},
 		"recheck": &flags.Option{
-			Description: "Include files with the Missing status.",
+			Description: "Include files with the NotFound flag.",
 		},
 		"rate-limit": &flags.Option{
 			Description: "Allowed requests per second. A negative value means unlimited.",
@@ -27,9 +27,8 @@ func init() {
 	}.AddTo(FlagParser.AddCommand(
 		"fetch-headers",
 		"Download headers of unchecked files.",
-		`Scans for files with the Unchecked status and downloads their headers.
-		A hit adds the response's headers to the database, then sets the file's
-		status to Partial. A miss sets the file's status to Missing.
+		`Scans for Unchecked files and downloads their headers. A hit adds the
+		response's headers to the database. A miss sets the NotFound flag.
 
 		Prints the aggregation of each response status code.`,
 		&CmdFetchHeaders{},

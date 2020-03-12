@@ -9,8 +9,7 @@ func init() {
 		"generate-files",
 		"Generate combinations of possible files.",
 		`Inserts into the database combinations of build hashes and file names
-		that aren't already present. Files are added with the Unchecked
-		status.`,
+		that aren't already present.`,
 		&CmdGenerateFiles{},
 	)
 }

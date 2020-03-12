@@ -21,31 +21,93 @@ import (
 	"github.com/robloxapi/rbxdump/histlog"
 )
 
-// FileStatus represents the presence of a file in the database.
-type FileStatus int8
+// FileFlags represents the existence of a file, and the presence of file
+// information in the database.
+type FileFlags uint8
 
 const (
-	StatusNonextant FileStatus = -2 // File confirmed to not exist.
-	StatusMissing   FileStatus = -1 // File may not exist.
-	StatusUnchecked FileStatus = +0 // File not checked.
-	StatusPartial   FileStatus = +1 // File exists, only headers have been retrieved.
-	StatusComplete  FileStatus = +2 // File exists, content also retrieved.
+	NotFound    FileFlags = 0b00001 // File was not found at URL.
+	Exists      FileFlags = 0b00010 // File exists. Must never be unset.
+	HasHeaders  FileFlags = 0b00100 // File has headers in database.
+	HasMetadata FileFlags = 0b01000 // File has metadata in database.
+	HasContent  FileFlags = 0b10000 // File has content in objects path.
+
+	// File has not yet been checked.
+	Unchecked FileFlags = 0b00000
+
+	// File exists, but was not found at URL.
+	Missing FileFlags = NotFound | Exists
+
+	// If (files.flags & Failed == Failed), headers.status contains the failed
+	// response status.
+	Failed FileFlags = NotFound | HasHeaders
 )
 
-func (s FileStatus) String() string {
-	switch s {
-	case StatusNonextant:
-		return "Nonextant"
-	case StatusMissing:
-		return "Missing"
-	case StatusUnchecked:
+func (f FileFlags) String() string {
+	if f == Unchecked {
 		return "Unchecked"
-	case StatusPartial:
+	}
+	var s []string
+	if f&NotFound != 0 {
+		s = append(s, "NotFound")
+	}
+	if f&Exists != 0 {
+		s = append(s, "Exists")
+	}
+	if f&HasHeaders != 0 {
+		s = append(s, "HasHeaders")
+	}
+	if f&HasMetadata != 0 {
+		s = append(s, "HasMetadata")
+	}
+	if f&HasContent != 0 {
+		s = append(s, "HasContent")
+	}
+	return strings.Join(s, "|")
+}
+
+// Progress returns a string representing progress of the data of a file.
+// Results have the following meanings:
+//
+//     Unchecked : File has not been checked.
+//     NotFound  : File was not found because it is either hidden or does not exist.
+//     Missing   : File was found previously, but was not found on the latest check.
+//     Failed    : File was not found for unexpected reason.
+//     Partial   : File exists and has headers.
+//     NoContent : File exists, has headers and metadata, but content has gone missing.
+//     Complete  : File exists and has headers, metadata, and content.
+//
+// If a file is in an unusual state, such as having metadata but missing
+// content, then the result of String is returned instead.
+//
+// Certain results do not represent all the information of a value. For example,
+// Missing does not indicate the presence or absence of headers, metadata, or
+// content.
+func (f FileFlags) Progress() string {
+	switch {
+	case f == Unchecked:
+		// File has not been checked.
+		return "Unchecked"
+	case f&Missing == Missing:
+		// File exists, but was not found.
+		return "Missing"
+	case f&Failed == Failed:
+		// File failed to download. Response status stored in headers table.
+		return "Failed"
+	case f&NotFound != 0:
+		// File was not found.
+		return "NotFound"
+	case f == Exists|HasHeaders:
+		// File exists and has headers.
 		return "Partial"
-	case StatusComplete:
+	case f == Exists|HasHeaders|HasMetadata:
+		// File exists, but content has gone missing.
+		return "NoContent"
+	case f == Exists|HasHeaders|HasMetadata|HasContent:
+		// File exists and has all data.
 		return "Complete"
 	}
-	return ""
+	return f.String()
 }
 
 type Executor interface {
@@ -110,7 +172,7 @@ func (a Action) Init(e Executor) error {
 			rowid    INTEGER PRIMARY KEY,
 			build    INTEGER NOT NULL REFERENCES builds(rowid) ON DELETE CASCADE,
 			filename INTEGER NOT NULL REFERENCES filenames(rowid) ON DELETE CASCADE,
-			status   INTEGER NOT NULL DEFAULT 0, -- Corresponds to FileStatus.
+			flags    INTEGER NOT NULL DEFAULT 0, -- Corresponds to FileFlags.
 			UNIQUE (build, filename)
 		);
 
@@ -132,6 +194,8 @@ func (a Action) Init(e Executor) error {
 			size  INTEGER NOT NULL, -- Size of the file content.
 			md5   TEXT NOT NULL     -- MD5 hash of the file content.
 		);
+
+		CREATE INDEX IF NOT EXISTS build_servers_build ON build_servers(build);
 	`
 	_, err := e.ExecContext(a.Context, query)
 	return err
@@ -349,7 +413,7 @@ func (a Action) FetchBuilds(db *sql.DB, f *Fetcher, file string) error {
 }
 
 // GenerateFiles inserts into a database combinations of build hashes and file
-// names that aren't already present. Files are added with the Unchecked status.
+// names that aren't already present. Files are added with the Unchecked flags.
 func (a Action) GenerateFiles(e Executor) (newRows int, err error) {
 	// Insert into files all combinations of builds and filenames that aren't
 	// already in files. Slower: Cut `OR IGNORE` and append `EXCEPT SELECT
@@ -406,7 +470,7 @@ func isDir(path string) error {
 
 type reqEntry struct {
 	id     int
-	status int
+	flags  int
 	server string
 	build  string
 	file   string
@@ -414,17 +478,16 @@ type reqEntry struct {
 
 // Combination of extra queries to make.
 const (
-	qHeaderFull       = 1 << iota // Upsert all headers.
-	qHeaderStatus                 // Upsert status header, set other headers to nil.
-	qHeaderJustStatus             // Upsert just the status header.
-	qMetadata                     // Upsert metadata.
+	qHeaders      = 1 << iota // Upsert all headers.
+	qHeaderStatus             // Upsert just the status header.
+	qMetadata                 // Upsert metadata.
 )
 
 type respEntry struct {
 	err error
 
 	id      int
-	status  FileStatus
+	flags   FileFlags
 	qAction int
 
 	// headers
@@ -453,11 +516,13 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 		return
 	}
 	entry.id = req.id
+	entry.flags = FileFlags(req.flags)
 	entry.respStatus = respStatus
 	skipped := false
 	if 200 <= respStatus && respStatus < 300 {
-		entry.status = StatusPartial
-		entry.qAction |= qHeaderFull
+		entry.flags |= Exists | HasHeaders
+		entry.flags &^= NotFound
+		entry.qAction |= qHeaders
 		if v, err := strconv.ParseInt(headers.Get("content-length"), 10, 64); err == nil {
 			entry.contentLength.Valid = true
 			entry.contentLength.Int64 = v
@@ -493,29 +558,20 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 					return
 				}
 			}
-			entry.status = StatusComplete
+			entry.flags |= HasMetadata | HasContent
 			entry.qAction |= qMetadata
 			entry.hash = hash
 			entry.size = size
 		}
 	} else {
 		object.Remove()
-		if respStatus == 403 {
-			// 403 is expected if the file does not exist (or is not exposed).
-			// Most file combinations will be this, and the status is already
-			// indicated by files.status, so avoid adding to headers table to
-			// save space.
-			entry.status = StatusMissing
-			if FileStatus(req.status) > StatusUnchecked {
-				// File went missing after being initially found. Update just
-				// the status, retaining any headers that might already be
-				// present.
-				entry.qAction |= qHeaderJustStatus
-			}
-		} else {
-			// Otherwise, log the status code for manual review, and assume the
-			// file should be rechecked.
-			entry.status = StatusUnchecked
+		entry.flags |= NotFound
+		// 403 is expected if the file is not found. Most file combinations will
+		// be this, and the status is already indicated by the NotFound flag, so
+		// avoid adding to headers table to save space.
+		if respStatus != 403 {
+			// Log unexpected status in headers for manual review.
+			entry.flags |= HasHeaders
 			entry.qAction |= qHeaderStatus
 		}
 	}
@@ -523,7 +579,7 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, 
 	if skipped {
 		skip = "S"
 	}
-	log.Printf("fetch %-9s %32s %1s from %s-%s (%d)", entry.status, entry.hash, skip, req.build, req.file, req.id)
+	log.Printf("fetch %-9s %32s %1s from %s-%s (%d)", entry.flags.Progress(), entry.hash, skip, req.build, req.file, req.id)
 }
 
 type Stats map[int]int
@@ -547,16 +603,17 @@ func (stats Stats) String() string {
 // then the entire file is downloaded to that directory. Otherwise, just the
 // headers are retrieved and stored in the database.
 //
-// When downloading entire files, only files with the Unchecked or Partial
-// status are considered. A hit writes the file to objects, adds the file's
-// headers to the database, and sets the status to Complete. A miss sets the
-// status to Missing.
+// When downloading file content, the only files considers are Unchecked files,
+// and files that have neither the NotFound flag nor the HasContent. A hit
+// writes the file to objects, adds the file's headers to the database, sets the
+// Exists, HasHeaders, HasMetadata, and HasContent flags, and unsets the
+// NotFound flag. A miss sets NotFound flag.
 //
-// When just retrieving headers, only files with the Unchecked status are
-// considered. A hit adds the file's headers to the database, and sets the
-// status to Partial. A miss sets the status to Missing.
+// When just retrieving headers, only Unchecked files are considered. A hit adds
+// the file's headers to the database, sets the Exists and HasHeaders flags, and
+// unsets the NotFound flag. A miss sets the NotFound flag.
 //
-// If recheck is true, then files with the Missing status are also included.
+// If recheck is true, then files with the NotFound flag set are also included.
 //
 // The rate argument specifies how many files are processed before commiting to
 // the database. A value of 0 or less uses DefaultCommitRate.
@@ -564,50 +621,60 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Q
 	if rate <= 0 {
 		rate = DefaultCommitRate
 	}
-	minstatus := StatusUnchecked
-	maxstatus := StatusUnchecked
+	var query = `
+		WITH temp AS (
+			SELECT
+				files.rowid AS id,
+				files.flags AS flags,
+				servers.url AS _server,
+				builds.hash AS _build,
+				filenames.name AS _file
+			FROM files, servers, builds, filenames, build_servers
+			WHERE files.build == builds.rowid
+			AND files.filename == filenames.rowid
+			AND files.build == build_servers.build
+			AND build_servers.server == servers.rowid
+			AND (
+				files.flags == 0 -- Select Unchecked files.
+				%s
+			)
+			%s
+			LIMIT ?
+		) SELECT * FROM temp
+		-- Collapse duplicates caused by build being available from multiple
+		-- servers. Note: this really slows down the query.
+		GROUP BY _build, _file
+	`
+	var params []interface{}
+	var queryFlags string
 	if recheck {
-		minstatus = StatusMissing
+		// Include files that were not found.
+		queryFlags += ` OR files.flags & (0) != 0` // NotFound
 	}
 	if objpath != "" {
 		if err := isDir(objpath); err != nil {
 			return err
 		}
-		maxstatus = StatusPartial
+		// Include files that were found and do not have content.
+		queryFlags += ` OR files.flags & (17) == 0` // !NotFound && !HasContent
 	}
+	stmt, err := db.Prepare(fmt.Sprintf(query, queryFlags, q.Expr))
+	if err != nil {
+		return fmt.Errorf("select files: %w", err)
+	}
+	params = append(params, q.Params...)
+	params = append(params, rate)
+
 	reqs := make([]reqEntry, 0, rate)
 	resps := make([]respEntry, 0, rate)
 	wg := sync.WaitGroup{}
 	for {
-		const query = `
-			WITH temp AS (
-				SELECT
-					files.rowid AS id,
-					servers.url AS _server,
-					builds.hash AS _build,
-					filenames.name AS _file
-				FROM files, builds, filenames, build_servers, servers
-				WHERE files.status BETWEEN ? AND ?
-				AND builds.rowid == files.build
-				AND filenames.rowid == files.filename
-				AND build_servers.build == files.build
-				AND build_servers.server == servers.rowid
-				%s
-				LIMIT ?
-			) SELECT * FROM temp
-			-- Collapse duplicates caused by build being available from multiple
-			-- servers. Note: this really slows down the query.
-			GROUP BY _build, _file
-		`
 		// TODO: Retain duplicate hashes; when a server fails, try the next
 		// server. Requires maintaining a map of successful hashes for the
 		// duration of the transaction. The map only needs to be as large as
 		// rate; successful hashes will not be pulled out of the database again.
 
-		params := []interface{}{minstatus, maxstatus}
-		params = append(params, q.Params...)
-		params = append(params, rate)
-		rows, err := db.QueryContext(a.Context, fmt.Sprintf(query, q.Expr), params...)
+		rows, err := stmt.QueryContext(a.Context, params...)
 		if err != nil {
 			return fmt.Errorf("select files: %w", err)
 		}
@@ -617,6 +684,7 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Q
 			reqs = append(reqs, reqEntry{})
 			err := rows.Scan(
 				&reqs[i].id,
+				&reqs[i].flags,
 				&reqs[i].server,
 				&reqs[i].build,
 				&reqs[i].file,
@@ -665,9 +733,9 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Q
 			if entry.err != nil {
 				return entry.err
 			}
-			query := `UPDATE files SET status = ? WHERE rowid = ?`
-			params := []interface{}{int(entry.status), entry.id}
-			if entry.qAction&qHeaderFull != 0 {
+			query := `UPDATE files SET flags = ? WHERE rowid = ?`
+			params := []interface{}{int(entry.flags), entry.id}
+			if entry.qAction&qHeaders != 0 {
 				query += `;
 					INSERT INTO headers(
 						file,
@@ -700,24 +768,7 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Q
 					entry.contentType,
 					entry.etag,
 				)
-
 			} else if entry.qAction&qHeaderStatus != 0 {
-				query += `;
-					INSERT INTO headers(file, status)
-					VALUES (?, ?)
-					ON CONFLICT (file) DO
-					UPDATE SET
-						status = ?,
-						content_length = ?,
-						last_modified = ?,
-						content_type = ?,
-						etag = ?
-				`
-				params = append(params,
-					entry.id, entry.respStatus,
-					entry.respStatus, nil, nil, nil, nil,
-				)
-			} else if entry.qAction&qHeaderJustStatus != 0 {
 				query += `;
 					INSERT INTO headers(file, status)
 					VALUES (?, ?)
