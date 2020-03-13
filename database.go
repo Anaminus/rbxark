@@ -433,7 +433,7 @@ func (a Action) GenerateFiles(e Executor) (newRows int, err error) {
 	return newRows, err
 }
 
-const DefaultCommitRate = 256
+const DefaultBatchSize = 256
 
 func getHeader(headers http.Header, key string, typ int) interface{} {
 	v := headers.Get(key)
@@ -615,11 +615,11 @@ func (stats Stats) String() string {
 //
 // If recheck is true, then files with the NotFound flag set are also included.
 //
-// The rate argument specifies how many files are processed before commiting to
-// the database. A value of 0 or less uses DefaultCommitRate.
-func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Query, recheck bool, rate int, stats Stats) error {
-	if rate <= 0 {
-		rate = DefaultCommitRate
+// The batchSize argument specifies how many files are processed before
+// committing to the database. A value of 0 or less uses DefaultBatchSize.
+func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Query, recheck bool, batchSize int, stats Stats) error {
+	if batchSize <= 0 {
+		batchSize = DefaultBatchSize
 	}
 	var query = `
 		WITH temp AS (
@@ -663,10 +663,10 @@ func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Q
 		return fmt.Errorf("select files: %w", err)
 	}
 	params = append(params, q.Params...)
-	params = append(params, rate)
+	params = append(params, batchSize)
 
-	reqs := make([]reqEntry, 0, rate)
-	resps := make([]respEntry, 0, rate)
+	reqs := make([]reqEntry, 0, batchSize)
+	resps := make([]respEntry, 0, batchSize)
 	wg := sync.WaitGroup{}
 	for {
 		// TODO: Retain duplicate hashes; when a server fails, try the next
