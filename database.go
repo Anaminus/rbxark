@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anaminus/rbxark/fetch"
 	"github.com/anaminus/rbxark/filters"
 	"github.com/anaminus/rbxark/objects"
 	"github.com/mattn/go-sqlite3"
@@ -354,7 +355,7 @@ func (a Action) AddBuild(e Executor, server string, build Build) error {
 
 // FetchBuilds downloads and scans the DeployHistory file from each server in
 // a database and inserts any new builds into the database.
-func (a Action) FetchBuilds(db *sql.DB, f *Fetcher, file string) error {
+func (a Action) FetchBuilds(db *sql.DB, f *fetch.Fetcher, file string) error {
 	servers, err := a.GetServers(db)
 	if err != nil {
 		return fmt.Errorf("get servers: %w", err)
@@ -502,13 +503,13 @@ type respEntry struct {
 	size int64
 }
 
-func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *Fetcher, objpath string, req *reqEntry, entry *respEntry) {
+func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *fetch.Fetcher, objpath string, req *reqEntry, entry *respEntry) {
 	defer wg.Done()
 	*entry = respEntry{}
 	object := objects.NewWriter(objpath)
-	var hashes *HashChecker
+	var hashes *fetch.HashChecker
 	if objpath != "" {
-		hashes = &HashChecker{}
+		hashes = &fetch.HashChecker{}
 	}
 	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), objpath, hashes, object.AsWriter())
 	if err != nil {
@@ -617,7 +618,7 @@ func (stats Stats) String() string {
 //
 // The batchSize argument specifies how many files are processed before
 // committing to the database. A value of 0 or less uses DefaultBatchSize.
-func (a Action) FetchContent(db *sql.DB, f *Fetcher, objpath string, q filters.Query, recheck bool, batchSize int, stats Stats) error {
+func (a Action) FetchContent(db *sql.DB, f *fetch.Fetcher, objpath string, q filters.Query, recheck bool, batchSize int, stats Stats) error {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}

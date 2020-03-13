@@ -1,6 +1,9 @@
 package main
 
-import "github.com/jessevdk/go-flags"
+import (
+	"github.com/anaminus/rbxark/fetch"
+	"github.com/jessevdk/go-flags"
+)
 
 func init() {
 	OptionTags{
@@ -39,7 +42,7 @@ func (cmd *CmdFetchBuilds) Execute(args []string) error {
 		return err
 	}
 
-	fetcher := NewFetcher(nil, cmd.Workers, config.RateLimit)
+	fetcher := fetch.NewFetcher(nil, cmd.Workers, config.RateLimit)
 
 	file := config.DeployHistory
 	if file == "" {

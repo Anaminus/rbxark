@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 
+	"github.com/anaminus/rbxark/fetch"
 	"github.com/jessevdk/go-flags"
 )
 
@@ -64,7 +65,7 @@ func (cmd *CmdFetchFiles) Execute(args []string) error {
 		return err
 	}
 
-	fetcher := NewFetcher(nil, cmd.Workers, config.RateLimit)
+	fetcher := fetch.NewFetcher(nil, cmd.Workers, config.RateLimit)
 
 	stats := Stats{}
 	err = action.FetchContent(db, fetcher, config.ObjectsPath, query, cmd.Recheck, cmd.BatchSize, stats)
