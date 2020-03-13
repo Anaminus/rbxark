@@ -507,9 +507,9 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *fetch.Fet
 	defer wg.Done()
 	*entry = respEntry{}
 	object := objects.NewWriter(objpath)
-	var hashes *fetch.HashChecker
+	var hashes *fetch.HashStore
 	if objpath != "" {
-		hashes = &fetch.HashChecker{}
+		hashes = &fetch.HashStore{}
 	}
 	respStatus, headers, err := f.FetchContent(ctx, buildFileURL(req.server, req.build, req.file), objpath, hashes, object.AsWriter())
 	if err != nil {

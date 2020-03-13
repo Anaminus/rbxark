@@ -13,14 +13,14 @@ import (
 	"golang.org/x/time/rate"
 )
 
-type HashChecker struct {
+type HashStore struct {
 	h map[string]struct{}
 	m sync.Mutex
 }
 
 // Check returns whether the given hash is in the map. If it isn't, the hash is
 // added to the map.
-func (h *HashChecker) Check(hash string) bool {
+func (h *HashStore) Check(hash string) bool {
 	if h == nil {
 		return false
 	}
@@ -142,7 +142,7 @@ func (f *Fetcher) FetchDeployHistory(ctx context.Context, url string) (stream hi
 // FetchContent fetches information about a file from url. If w is not nil, the
 // content of the file is written to it. Otherwise, just the headers of the
 // response are returned.
-func (f *Fetcher) FetchContent(ctx context.Context, url string, objpath string, hashes *HashChecker, w io.Writer) (status int, headers http.Header, err error) {
+func (f *Fetcher) FetchContent(ctx context.Context, url string, objpath string, hashes *HashStore, w io.Writer) (status int, headers http.Header, err error) {
 	method := "GET"
 	if w == nil {
 		method = "HEAD"
