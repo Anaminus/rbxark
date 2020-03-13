@@ -73,7 +73,7 @@ func LoadFilter(list []string, typ string) (query filters.Query, err error) {
 		"build",
 		"file",
 	)
-	filter.AllowVars("files",
+	filter.AllowVars("content",
 		"server",
 		"build",
 		"file",

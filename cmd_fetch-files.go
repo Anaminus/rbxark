@@ -55,7 +55,7 @@ func (cmd *CmdFetchFiles) Execute(args []string) error {
 		return err
 	}
 
-	query, err := LoadFilter(config.Filters, "files")
+	query, err := LoadFilter(config.Filters, "content")
 	if err != nil {
 		return err
 	}
