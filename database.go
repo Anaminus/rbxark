@@ -576,11 +576,15 @@ func runFetchContentWorker(ctx context.Context, wg *sync.WaitGroup, f *fetch.Fet
 			entry.qAction |= qHeaderStatus
 		}
 	}
-	var skip string
-	if skipped {
-		skip = "S"
+	if object != nil {
+		var skip string
+		if skipped {
+			skip = "S"
+		}
+		log.Printf("fetch %-9s %32s %1s from %s-%s (%d)", entry.flags.Progress(), entry.hash, skip, req.build, req.file, req.id)
+		return
 	}
-	log.Printf("fetch %-9s %32s %1s from %s-%s (%d)", entry.flags.Progress(), entry.hash, skip, req.build, req.file, req.id)
+	log.Printf("fetch %-9s from %s-%s (%d)", entry.flags.Progress(), req.build, req.file, req.id)
 }
 
 type Stats map[int]int
